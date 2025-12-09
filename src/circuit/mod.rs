@@ -5,14 +5,30 @@ pub mod debug;
 use crate::circuit::basics::{Node, Net, NetId, NetLit};
 
 pub struct Circuit {
-    pub nodes: Vec<Node>,
-    pub nets: Vec<Net>,
-    pub inputs: Vec<NetId>,
-    pub outputs: Vec<NetLit>,
+    nodes: Vec<Node>,
+    nets: Vec<Net>,
+    inputs: Vec<NetId>,
+    outputs: Vec<NetLit>,
 }
 
 impl Circuit {
     pub fn new(nodes: Vec<Node>, nets: Vec<Net>, inputs: Vec<NetId>, outputs: Vec<NetLit>) -> Self {
         Self { nodes, nets, inputs, outputs }
+    }
+
+    pub fn nodes(&self) -> &[Node] {
+        &self.nodes
+    }
+
+    pub fn nets(&self) -> &[Net] {
+        &self.nets
+    }
+
+    pub fn inputs(&self) -> &[NetId] {
+        &self.inputs
+    }
+
+    pub fn outputs(&self) -> &[NetLit] {
+        &self.outputs
     }
 }

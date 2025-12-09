@@ -58,7 +58,7 @@ struct AigerAnd {
     rhs1: u32,
 }
 
-use crate::circuit::{Circuit, basics::{Net, NetId, NetLit, Node}, gate::AndGate};
+use crate::circuit::{Circuit, basics::{Net, NetId, NetLit, Node}, gate::Gate};
 
 impl Circuit {
     pub fn from_aig<P: AsRef<Path>>(path: P) -> Self { 
@@ -112,7 +112,7 @@ impl Circuit {
 
                 let node = Node::new(
                     None, 
-                    Box::new(AndGate), 
+                    Gate::And, 
                     vec![
                         NetLit::new(rhs0_var, rhs0_neg),
                         NetLit::new(rhs1_var, rhs1_neg),

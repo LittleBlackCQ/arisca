@@ -32,13 +32,13 @@ impl NetLit {
 
 pub struct Node {
     name: Option<Box<str>>,
-    gate: Box<dyn Gate>,
+    gate: Gate,
     inputs: Vec<NetLit>,
     outputs: Vec<NetId>,
 }
 
 impl Node {
-    pub fn new(name: Option<Box<str>>, gate: Box<dyn Gate>, inputs: Vec<NetLit>, outputs: Vec<NetId>) -> Self {
+    pub fn new(name: Option<Box<str>>, gate: Gate, inputs: Vec<NetLit>, outputs: Vec<NetId>) -> Self {
         Node {
             name,
             gate,
@@ -50,8 +50,8 @@ impl Node {
         self.name.as_deref().unwrap_or("")
     }
 
-    pub fn gate_type(&self) -> &str {
-        self.gate.name()
+    pub fn gate(&self) -> &Gate {
+        &self.gate
     }
 
 

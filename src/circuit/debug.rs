@@ -9,7 +9,7 @@ impl fmt::Debug for NetLit {
 
 impl fmt::Debug for Node { 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(type: {:?}, inputs: {:?}, outputs: {:?}, name: {:?})", self.gate_type(), self.inputs(), self.outputs(), self.name())
+        write!(f, "(type: {:?}, inputs: {:?}, outputs: {:?}, name: {:?})", self.gate().name(), self.inputs(), self.outputs(), self.name())
     }
 }
 

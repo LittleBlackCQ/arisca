@@ -1,70 +1,67 @@
-use std::any::Any;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Gate {
+    And,
+    Or,
+    Xor,
+    HalfAdder,
+    FullAdder,
+}
 
-pub trait Gate: Any {
-    fn name(&self) -> &'static str;
-    fn n_inputs(&self) -> usize;
-    fn n_outputs(&self) -> usize;
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]);
-    fn eval(&self, inputs: &[bool], outputs: &mut [bool]) {
+impl Gate {
+    pub fn n_inputs(self) -> usize {
+        match self {
+            Gate::And => 2,
+            Gate::Or => 2,
+            Gate::Xor => 2,
+            Gate::HalfAdder => 2,
+            Gate::FullAdder => 3,
+        }
+    }
+
+    pub fn n_outputs(self) -> usize {
+        match self {
+            Gate::And => 1,
+            Gate::Or => 1,
+            Gate::Xor => 1,
+            Gate::HalfAdder => 2,   // sum, carry
+            Gate::FullAdder => 2,   // sum, carry
+        }
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Gate::And => "and",
+            Gate::Or => "or",
+            Gate::Xor => "xor",
+            Gate::HalfAdder => "half_adder",
+            Gate::FullAdder => "full_adder",
+        }
+    }
+
+    pub fn logic(self, inputs: &[bool]) -> Vec<bool> {
         assert_eq!(inputs.len(), self.n_inputs());
+        let mut outputs = vec![false; self.n_outputs()];
+        match self {
+            Gate::And => {
+                outputs[0] = inputs[0] & inputs[1];
+            }
+            Gate::Or => {
+                outputs[0] = inputs[0] | inputs[1];
+            }
+            Gate::Xor => {
+                outputs[0] = inputs[0] ^ inputs[1];
+            }
+            Gate::HalfAdder => {
+                outputs[0] = inputs[0] ^ inputs[1]; // sum
+                outputs[1] = inputs[0] & inputs[1]; // carry
+            }
+            Gate::FullAdder => {
+                outputs[0] = inputs[0] ^ inputs[1] ^ inputs[2]; // sum
+                outputs[1] = (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]) // carry
+            }
+        }
         assert_eq!(outputs.len(), self.n_outputs());
-        self.logic(inputs, outputs)
+        outputs
     }
 }
 
-
-pub struct AndGate;
-impl Gate for AndGate {
-    fn name(&self) -> &'static str { "and" }
-    fn n_inputs(&self) -> usize { 2 }
-    fn n_outputs(&self) -> usize { 1 }
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]) {
-        outputs[0] = inputs[0] & inputs[1];
-    }
-}
-
-
-pub struct OrGate;
-impl Gate for OrGate {
-    fn name(&self) -> &'static str { "or" }
-    fn n_inputs(&self) -> usize { 2 }
-    fn n_outputs(&self) -> usize { 1 }
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]) {
-        outputs[0] = inputs[0] | inputs[1];
-    }
-}
-
-
-pub struct XorGate;
-impl Gate for XorGate {
-    fn name(&self) -> &'static str { "xor" }
-    fn n_inputs(&self) -> usize { 2 }
-    fn n_outputs(&self) -> usize { 1 }
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]) {
-        outputs[0] = inputs[0] ^ inputs[1];
-    }
-}
-
-
-pub struct HalfAdderGate;
-impl Gate for HalfAdderGate {
-    fn name(&self) -> &'static str { "half_adder" }
-    fn n_inputs(&self) -> usize { 2 }
-    fn n_outputs(&self) -> usize { 2 }
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]) {
-        outputs[0] = inputs[0] ^ inputs[1]; // sum
-        outputs[1] = inputs[0] & inputs[1]; // carry
-    }
-}
-
-
-pub struct FullAdderGate;
-impl Gate for FullAdderGate {
-    fn name(&self) -> &'static str { "full_adder" }
-    fn n_inputs(&self) -> usize { 3 }
-    fn n_outputs(&self) -> usize { 2 }
-    fn logic(&self, inputs: &[bool], outputs: &mut [bool]) {
-        outputs[0] = inputs[0] ^ inputs[1] ^ inputs[2]; // sum
-        outputs[1] = (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]); // carry
-    }
-}

@@ -1,7 +1,7 @@
 use crate::bipoly::mono::{Monomial, VarId};
 use crate::circuit::{Circuit, gate::Gate, basics::Node};
 
-use log::{debug};
+use log::{debug, warn};
 
 #[derive(Clone)]
 pub struct Polynomial {
@@ -119,7 +119,7 @@ impl Polynomial {
 
 impl Gate {
     pub fn polynomial(&self, inputs: &[VarId], outputs: &[VarId]) -> Vec<Polynomial> {
-        assert_eq!(inputs.len(), self.n_inputs());
+        assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {} in polynomial.", self.name());
         let mut res = vec![Polynomial::zero(); self.n_outputs()];
         match self {
             Gate::And => { // x=ab
@@ -159,7 +159,7 @@ impl Gate {
                         - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], 2));
             }
         }
-        assert_eq!(res.len(), self.n_outputs());
+        assert_eq!(res.len(), self.n_outputs(), "Wrong number of outputs for {} in polynomial.", self.name());
         res
     }
 
@@ -191,22 +191,20 @@ impl Circuit {
         }
         for net in self.nets().iter().rev() {
             if let Some(driver) = net.driver() {
-                if let Some(node) = self.nodes().get(driver) {
-                    let gate_polys = node.poly_eval();
-                    for gate_poly in gate_polys { 
-                        debug!("Polynomial before reduce: {:?}", golden);
-                        debug!("Polynomial for Node {:?}: {:?}",driver, gate_poly);
-                        if let Some(term) = gate_poly.leading_term() {
-                            assert_eq!(term.degree(), 1);
-                            assert_eq!(term.coeff(), 1);
-                            if let Some(var) = term.term().first() {
-                                let factor = golden.divide_by_var(var);
-                                let mult = gate_poly * factor;
-                                golden.sub_assign(&mult);
-                            }
-                        }
-                        debug!("Polynomial after reduce: {:?}", golden)
+                let node = self.nodes().get(driver).unwrap();
+                let gate_polys = node.poly_eval();
+                for gate_poly in gate_polys { 
+                    debug!("Polynomial before reduce: {:?}", golden);
+                    debug!("Polynomial for Node {:?}: {:?}",driver, gate_poly);
+                    let term = gate_poly.leading_term().unwrap();
+                    if term.degree() != 1 || term.coeff() != 1 {
+                        warn!("Polynomial of node {:?} has non-unit leading term: {:?}", driver, term);
                     }
+                    let var = term.term().first().unwrap();
+                    let factor = golden.divide_by_var(var);
+                    let mult = gate_poly * factor;
+                    golden.sub_assign(&mult);
+                    debug!("Polynomial after reduce: {:?}", golden)
                 }
             }
         }

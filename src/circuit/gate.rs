@@ -39,7 +39,7 @@ impl Gate {
     }
 
     pub fn logic(self, inputs: &[bool]) -> Vec<bool> {
-        assert_eq!(inputs.len(), self.n_inputs());
+        assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {:?} in logic.", self.name());
         let mut outputs = vec![false; self.n_outputs()];
         match self {
             Gate::And => {
@@ -60,7 +60,7 @@ impl Gate {
                 outputs[1] = (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]) // carry
             }
         }
-        assert_eq!(outputs.len(), self.n_outputs());
+        assert_eq!(outputs.len(), self.n_outputs(), "Wrong number of outputs for {:?} in logic.", self.name());
         outputs
     }
 }

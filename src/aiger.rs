@@ -2,6 +2,7 @@ use libc::{FILE, fclose, fopen};
 use std::{
     ffi::{CString, c_char, c_void},
     path::Path,
+    process::exit
 };
 use log::{warn, error};
 
@@ -67,14 +68,14 @@ impl Circuit {
         let mode = CString::new("r").unwrap();
         let file = unsafe { fopen(file.as_ptr(), mode.as_ptr())};
         if file.is_null() {
-            error!("{} not found.", path.display());
-            panic!()
+            error!("'{}' not found.", path.display());
+            exit(1);
         }
 
         let aiger = unsafe { aiger_init() };
         if !unsafe { aiger_read_from_file(aiger, file) }.is_null() {
-            error!("read {} failed.", path.display());
-            panic!();
+            error!("read file '{}' failed.", path.display());
+            exit(1);
         }
         unsafe { fclose(file) };
 

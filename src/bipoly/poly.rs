@@ -137,6 +137,18 @@ impl Gate {
                         + Polynomial::var(inputs[1], 1)
                         - Polynomial::term(&[inputs[0], inputs[1]], 2));
             }
+            Gate::Xor3 => { // x=a+b+c-2(ab+bc+ca)+4abc
+                let sum_linear = Polynomial::var(inputs[0], 1) + Polynomial::var(inputs[1], 1) + Polynomial::var(inputs[2], 1);
+                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], 2) + Polynomial::term(&[inputs[1], inputs[2]], 2) + Polynomial::term(&[inputs[0], inputs[2]], 2);
+                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], 4);
+                
+                res[0] += Polynomial::var(outputs[0], 1) - (sum_linear - sum_quad + cubic);
+            }
+            Gate::Maj => { // x=ab+bc+ca-2abc
+                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], 1) + Polynomial::term(&[inputs[1], inputs[2]], 1) + Polynomial::term(&[inputs[0], inputs[2]], 1);
+                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], 2);
+                res[0] += Polynomial::var(outputs[0], 1) - (sum_quad - cubic);
+            }
             Gate::HalfAdder => {
                 // s+2c=a+b
                 res[0] += Polynomial::var(outputs[0], 1) + Polynomial::var(outputs[1], 2) -

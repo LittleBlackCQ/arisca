@@ -1,5 +1,6 @@
-use super::{Circuit, basics::{NetLit, Node, Net}};
+use super::*;
 use std::fmt;
+use std::fs;
 
 impl fmt::Debug for NetLit { 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -34,5 +35,84 @@ impl fmt::Debug for Circuit {
         }
         write!(f, "Inputs: {:?}\n", self.inputs)?;
         write!(f, "Outputs: {:?}\n", self.outputs)
+    }
+}
+
+impl Circuit {
+    pub fn to_dot(&self, filename: &str) {
+        let mut dot = String::new();
+        
+        dot.push_str("digraph G {\n");
+        dot.push_str("    rankdir=\"BT\";\n");
+        dot.push_str("    node [style=\"filled\"];\n");
+
+        let mut net_levels = vec![0; self.nets.len()];
+        let mut node_levels = vec![0; self.nodes.len()];
+
+        for &net_id in &self.topo_order {
+            if let Some(driver_id) = self.nets[net_id].driver() {
+                net_levels[net_id] = node_levels[driver_id];
+            } else {
+                net_levels[net_id] = 0;
+            }
+            for &load_id in self.nets[net_id].loads() {
+                node_levels[load_id] = node_levels[load_id].max(net_levels[net_id] + 1);
+            }
+        }
+
+        for (i, net_id) in self.inputs.iter().enumerate() {
+            let label = format!("pi_{}", i);
+            dot.push_str(&format!("    net_{} [label=\"{}\", fillcolor=\"gray\", shape=\"triangle\"];\n", net_id, label));
+        }
+
+        for (i, node) in self.nodes.iter().enumerate() {
+            let label = if let Some(name) = node.name() { name.to_string() } else { format!("{}_{}", node.gate().name(), i) };
+            dot.push_str(&format!("    node_{} [label=\"{}\", fillcolor=\"{}\", shape=\"ellipse\"];\n", i, label, node.gate().color()));
+        }
+
+        for i in 0..self.outputs().len() {
+            dot.push_str(&format!("    out_{} [label=\"po_{}\", fillcolor=\"gray\", shape=\"invtriangle\"];\n", i, i));
+        }
+
+        for (node_idx, node) in self.nodes.iter().enumerate() {
+            for input_lit in node.inputs() {
+                let src_net = input_lit.net();
+                let style = if input_lit.negative() { "dashed" } else { "solid" };
+                
+                if let Some(driver_idx) = self.nets[src_net].driver() {
+                    dot.push_str(&format!("    node_{} -> node_{} [style=\"{}\"];\n", driver_idx, node_idx, style));
+                } else if self.inputs.contains(&src_net) {
+                    dot.push_str(&format!("    net_{} -> node_{} [style=\"{}\"];\n", src_net, node_idx, style));
+                }
+            }
+        }
+
+        for (out_idx, out_lit) in self.outputs.iter().enumerate() {
+            let src_net = out_lit.net();
+            let style = if out_lit.negative() { "dashed" } else { "solid" };
+            if let Some(driver_idx) = self.nets[src_net].driver() {
+                dot.push_str(&format!("    node_{} -> out_{} [style=\"{}\"];\n", driver_idx, out_idx, style));
+            } else if self.inputs.contains(&src_net) {
+                dot.push_str(&format!("    net_{} -> out_{} [style=\"{}\"];\n", src_net, out_idx, style));
+            }
+        }
+
+        let max_level = *node_levels.iter().max().unwrap_or(&0);
+        for l in 0..=max_level {
+            let mut same_rank_nodes = Vec::new();
+            for (idx, &lvl) in node_levels.iter().enumerate() {
+                if lvl == l { same_rank_nodes.push(format!("node_{}", idx)); }
+            }
+            if l == 0 {
+                for &net_id in &self.inputs { same_rank_nodes.push(format!("net_{}", net_id)); }
+            }
+            if !same_rank_nodes.is_empty() {
+                dot.push_str(&format!("    {{ rank=same; {}; }}\n", same_rank_nodes.join("; ")));
+            }
+        }
+
+        dot.push_str("}\n");
+
+        fs::write(filename, dot).expect(&format!("Circuit cannot write to file {} as a dot file!", filename));
     }
 }

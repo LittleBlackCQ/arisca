@@ -4,6 +4,7 @@ use super::gate::Gate;
 pub type NodeId = usize;
 pub type NetId = usize;
 
+#[derive(Clone, Copy, Hash)]
 pub struct NetLit {
     net: NetId,
     negative: bool,
@@ -46,8 +47,8 @@ impl Node {
             outputs,
         }
     }
-    pub fn name(&self) -> &str {
-        self.name.as_deref().unwrap_or("")
+    pub fn name(&self) -> &Option<Box<str>> {
+        &self.name
     }
 
     pub fn gate(&self) -> &Gate {
@@ -83,8 +84,8 @@ impl Net {
         Net::new(None, None, vec![])
     }
 
-    pub fn name(&self) -> &str {
-        self.name.as_deref().unwrap_or("")
+    pub fn name(&self) -> &Option<Box<str>> {
+        &self.name
     }
 
     pub fn set_driver(&mut self, driver: NodeId) {

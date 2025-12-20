@@ -31,8 +31,8 @@ impl Gate {
             Gate::Xor => "xor",
             Gate::Xor3 => "xor3",
             Gate::Maj => "maj",
-            Gate::HalfAdder => "half_adder",
-            Gate::FullAdder => "full_adder",
+            Gate::HalfAdder => "ha",
+            Gate::FullAdder => "fa",
         }
     }
 
@@ -67,8 +67,8 @@ impl Gate {
     pub fn color(&self) -> &'static str {
         match self {
             Gate::And => "lightcoral",
-            Gate::Or | Gate::HalfAdder => "lightskyblue",
-            Gate::Xor | Gate::FullAdder | Gate::Xor3 => "palegreen2",
+            Gate::Or | Gate::FullAdder => "lightskyblue",
+            Gate::Xor | Gate::HalfAdder | Gate::Xor3 => "palegreen2",
             Gate::Maj => "gold",
         }
     }

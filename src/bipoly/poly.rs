@@ -1,5 +1,5 @@
 use crate::bipoly::mono::{Monomial, VarId};
-use crate::circuit::{Circuit, gate::Gate, basics::Node};
+use crate::circuit::{Circuit, gate::Gate, basics::{Node, NetId}};
 
 use log::{debug, warn};
 
@@ -33,6 +33,16 @@ impl Polynomial {
 
     pub fn mono(m: Monomial) -> Self {
         Polynomial { terms: vec![m] }
+    }
+    
+    pub fn remap<F>(&self, map: F) -> Self 
+    where F: Fn(VarId) -> VarId {
+        let mut res = Polynomial::zero();
+        for m in self.terms.iter() {
+            let new_vars: Vec<VarId> = m.term().iter().map(|&v| map(v)).collect();
+            res.insert(Monomial::new(&new_vars, m.coeff()));
+        }
+        res
     }
 
     pub fn divide_by_var(&self, v: &VarId) -> Self {
@@ -178,14 +188,16 @@ impl Gate {
 }
 
 impl Node {
-    pub fn poly_eval(&self) -> Vec<Polynomial> {
-        let inputs: Vec<u32> = self.inputs().iter().map(|lit| u32::try_from(lit.net()).expect("net index too large")).collect();
-        let outputs: Vec<u32> = self.outputs().iter().map(|net| u32::try_from(*net).expect("net index too large")).collect();
+    pub fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
+    where F: Fn(NetId) -> VarId {
+        let inputs: Vec<VarId> = self.inputs().iter().map(|lit| map(lit.net())).collect();
+        let outputs: Vec<VarId> = self.outputs().iter().map(|net| map(*net)).collect();
+        
         let mut res = self.gate().polynomial(&inputs, &outputs);
         for p in res.iter_mut() {
             for lit in self.inputs().iter() {
                 if lit.negative() {
-                    p.neg_var(&u32::try_from(lit.net()).expect("net index too large"));
+                    p.neg_var(&map(lit.net()));
                 }
             }
         }
@@ -195,16 +207,26 @@ impl Node {
 
 impl Circuit {
     pub fn check_poly(&self, golden: &Polynomial) -> bool { 
-        let mut golden = golden.clone();
+        // 1. remap nets to topo order
+        let mut net_to_topo = vec![0u32; self.nets().len()];
+        for (i, &net) in self.topology_order().iter().enumerate() {
+            net_to_topo[net] = i as u32;
+        }
+        let map_fn = |n: NetId| net_to_topo[n];
+
+        // 2. remap golden polynomial and outputs
+        let mut golden = golden.remap(|v| map_fn(v as usize));
         for output in self.outputs() {
             if output.negative() {
-                golden.neg_var(&u32::try_from(output.net()).expect("net index too large"));
+                golden.neg_var(&map_fn(output.net()));
             }
         }
-        for net in self.nets().iter().rev() {
-            if let Some(driver) = net.driver() {
+
+        // 3. traverse circuit through reverse topological order
+        for &net in self.topology_order().iter().rev() {
+            if let Some(driver) = self.nets()[net].driver() {
                 let node = self.nodes().get(driver).unwrap();
-                let gate_polys = node.poly_eval();
+                let gate_polys = node.poly_eval(&map_fn);
                 for gate_poly in gate_polys { 
                     debug!("Polynomial before reduce: {:?}", golden);
                     debug!("Polynomial for Node {:?}: {:?}",driver, gate_poly);

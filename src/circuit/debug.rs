@@ -80,7 +80,15 @@ impl Circuit {
                 let style = if input_lit.negative() { "dashed" } else { "solid" };
                 
                 if let Some(driver_idx) = self.nets[src_net].driver() {
-                    dot.push_str(&format!("    node_{} -> node_{} [style=\"{}\"];\n", driver_idx, node_idx, style));
+                    // Logic added here for multi-output labeling
+                    let driver_node = &self.nodes[driver_idx];
+                    let label_attr = if driver_node.outputs().len() > 1 {
+                        let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
+                        format!("label=\"{}\", ", out_idx)
+                    } else {
+                        String::new()
+                    };
+                    dot.push_str(&format!("    node_{} -> node_{} [{}style=\"{}\"];\n", driver_idx, node_idx, label_attr, style));
                 } else if self.inputs.contains(&src_net) {
                     dot.push_str(&format!("    net_{} -> node_{} [style=\"{}\"];\n", src_net, node_idx, style));
                 }
@@ -91,7 +99,15 @@ impl Circuit {
             let src_net = out_lit.net();
             let style = if out_lit.negative() { "dashed" } else { "solid" };
             if let Some(driver_idx) = self.nets[src_net].driver() {
-                dot.push_str(&format!("    node_{} -> out_{} [style=\"{}\"];\n", driver_idx, out_idx, style));
+                // Logic added here for multi-output labeling to primary outputs
+                let driver_node = &self.nodes[driver_idx];
+                let label_attr = if driver_node.outputs().len() > 1 {
+                    let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
+                    format!("label=\"{}\", ", out_idx)
+                } else {
+                    String::new()
+                };
+                dot.push_str(&format!("    node_{} -> out_{} [{}style=\"{}\"];\n", driver_idx, out_idx, label_attr, style));
             } else if self.inputs.contains(&src_net) {
                 dot.push_str(&format!("    net_{} -> out_{} [style=\"{}\"];\n", src_net, out_idx, style));
             }

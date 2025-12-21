@@ -96,10 +96,16 @@ impl Circuit {
         let mut order = Vec::with_capacity(net_num);
         while let Some(n) = queue.pop_front() {
             order.push(n);
+            let driver_n = self.nets[n].driver();
+
             for &succ in &adj[n] {
                 indegree[succ] -= 1;
                 if indegree[succ] == 0 {
-                    queue.push_back(succ);
+                    let is_sibling = driver_n.is_some()
+                        && driver_n == self.nets[succ].driver();
+                    
+                    if is_sibling { queue.push_front(succ); }
+                    else { queue.push_back(succ); }
                 }
             }
         }

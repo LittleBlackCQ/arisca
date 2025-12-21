@@ -1,34 +1,38 @@
+use num_bigint::BigInt;
+use num_traits::{Zero, One};
+
 pub type VarId = u32;
 pub type Term = Vec<VarId>;
+
 #[derive(Clone, Eq, PartialEq, Hash)]
 pub struct Monomial {
-    coeff: i64,
+    coeff: BigInt,
     term: Term,
 }
 
 impl Monomial {
-    pub fn new(vars: &[VarId], coeff: i64) -> Self {
+    pub fn new(vars: &[VarId], coeff: BigInt) -> Self {
         let mut term = vars.to_vec();
         term.sort_unstable();
         term.dedup();
         Monomial { coeff, term }
     }
 
-    pub fn constant(coeff: i64) -> Self {
-        assert_ne!(coeff, 0);
+    pub fn constant(coeff: BigInt) -> Self {
+        assert!(!coeff.is_zero());
         Monomial::new(&[], coeff)
     }
 
     pub fn vars(v: &[VarId]) -> Self {
-        Monomial::new(v, 1)
+        Monomial::new(v, BigInt::one())
     }
 
     pub fn neg(&self) -> Self {
-        Self::new(&self.term, -self.coeff)
+        Self::new(&self.term, -&self.coeff)
     }
 
-    pub fn coeff(&self) -> i64 {
-        self.coeff
+    pub fn coeff(&self) -> &BigInt {
+        &self.coeff
     }
 
     pub fn term(&self) -> &[VarId] {
@@ -43,12 +47,13 @@ impl Monomial {
         self.term.binary_search(v).is_ok()
     }
 
-    pub fn add_coeff(&mut self, rhs: i64) {
+    // Accept reference to avoid moving/cloning rhs
+    pub fn add_coeff(&mut self, rhs: &BigInt) {
         self.coeff += rhs;
     }
 
     pub fn neg_coeff(&mut self) {
-        self.coeff = -self.coeff;
+        self.coeff = -&self.coeff;
     }
 
     pub fn remove_var(&mut self, v: &VarId) -> bool {
@@ -61,11 +66,12 @@ impl Monomial {
     }
 
     pub fn mul_assign(&mut self, rhs: &Monomial) {
-        self.coeff *= rhs.coeff;
+        self.coeff *= &rhs.coeff;
 
         let va = &self.term;
         let vb = &rhs.term;
 
+        // Merge sorted terms (linear scan)
         let mut res = Vec::with_capacity(va.len() + vb.len());
         let mut pi = 0;
         let mut qi = 0;
@@ -102,6 +108,7 @@ impl Monomial {
 
 impl Ord for Monomial {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        // Short-lex order: compare length first, then lexicographical
         let min_len = self.term.len().min(other.term.len());
         for i in 0..min_len {
             match self.term[i].cmp(&other.term[i]) {

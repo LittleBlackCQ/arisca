@@ -61,8 +61,10 @@ struct AigerAnd {
 
 use crate::circuit::{Circuit, basics::{Net, NetId, NetLit, Node}, gate::Gate};
 
-impl Circuit {
-    pub fn from_aig<P: AsRef<Path>>(path: P) -> Self { 
+pub struct AigerParser;
+
+impl AigerParser {
+    pub fn from_aig<P: AsRef<Path>>(path: P) -> Result<Circuit, ()> { 
         let path = path.as_ref();
         let file = CString::new(path.to_str().unwrap()).unwrap();
         let mode = CString::new("r").unwrap();
@@ -75,7 +77,7 @@ impl Circuit {
         let aiger = unsafe { aiger_init() };
         if !unsafe { aiger_read_from_file(aiger, file) }.is_null() {
             error!("read file '{}' failed.", path.display());
-            exit(1);
+            return Err(());
         }
         unsafe { fclose(file) };
 
@@ -138,6 +140,6 @@ impl Circuit {
             }
         }
 
-        Circuit::new(nodes, nets, inputs, outputs)
+        Ok(Circuit::new(nodes, nets, inputs, outputs))
     }
 }

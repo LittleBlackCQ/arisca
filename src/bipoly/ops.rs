@@ -1,4 +1,4 @@
-use crate::bipoly::poly::Polynomial;
+use super::poly::Polynomial;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Neg, Mul, MulAssign};
 
 impl Add for Polynomial {

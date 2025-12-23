@@ -38,6 +38,15 @@ impl fmt::Debug for Circuit {
     }
 }
 
+fn get_gate_color(g: &Gate) -> &'static str {
+    match g {
+        Gate::And => "lightcoral",
+        Gate::Or | Gate::FullAdder => "lightskyblue",
+        Gate::Xor | Gate::HalfAdder | Gate::Xor3 => "palegreen2",
+        Gate::Maj => "gold",
+    }
+}
+
 impl Circuit {
     pub fn to_dot(&self, filename: &str) {
         let mut dot = String::new();
@@ -67,7 +76,7 @@ impl Circuit {
 
         for (i, node) in self.nodes.iter().enumerate() {
             let label = if let Some(name) = node.name() { name.to_string() } else { format!("{}_{}", node.gate().name(), i) };
-            dot.push_str(&format!("    node_{} [label=\"{}\", fillcolor=\"{}\", shape=\"ellipse\"];\n", i, label, node.gate().color()));
+            dot.push_str(&format!("    node_{} [label=\"{}\", fillcolor=\"{}\", shape=\"ellipse\"];\n", i, label, get_gate_color(node.gate())));
         }
 
         for i in 0..self.outputs().len() {

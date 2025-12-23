@@ -1,4 +1,5 @@
 use super::*;
+use super::sim::Simulator;
 use std::collections::{BTreeSet, HashMap};
 
 pub trait ExtractorStrategy {
@@ -16,6 +17,12 @@ pub struct Match {
     pub output_negated: bool,
     pub input_negations: Vec<bool>,
     pub gate: Gate,
+}
+
+struct AdderMatch {
+    sum: Match,
+    carry: Match,
+    gate: Gate,
 }
 
 pub struct GenericExtractor;
@@ -54,7 +61,7 @@ impl GenericExtractor {
             &[NetLit::new(root, false)],
         );
 
-        let tt: Vec<bool> = subcircuit.get_tt().iter().map(|r| r[0]).collect();
+        let tt: Vec<bool> = Simulator::get_tt(&subcircuit).iter().map(|r| r[0]).collect();
         strategy.match_tt(&tt).map(|(neg, in_negs)| Match { 
             root, cut: inputs, cone_nets, cone_nodes, 
             output_negated: neg, input_negations: in_negs, gate: strategy.target_gate(),
@@ -405,10 +412,4 @@ impl AdderExtractor {
             circuit.inputs().iter().map(|m| net_map[m]).collect(), 
             circuit.outputs().iter().map(|m| NetLit::new(net_map[&m.net()], m.negative() ^ out_mods.contains_key(&m.net()))).collect())
     }
-}
-
-struct AdderMatch {
-    sum: Match,
-    carry: Match,
-    gate: Gate,
 }

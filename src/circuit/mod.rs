@@ -5,8 +5,8 @@ pub mod extractor;
 pub mod cut;
 pub mod sim;
 
-use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit};
-use crate::circuit::gate::Gate;
+pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit};
+pub use crate::circuit::gate::Gate;
 use std::collections::{VecDeque, HashMap};
 
 pub struct Circuit {
@@ -16,6 +16,7 @@ pub struct Circuit {
     outputs: Vec<NetLit>,
 
     topo_order: Vec<NetId>,
+    topo_index_map: Vec<usize>,
 }
 
 impl Circuit {
@@ -25,9 +26,15 @@ impl Circuit {
             nets, 
             inputs, 
             outputs, 
-            topo_order: Vec::new() 
+            topo_order: Vec::new(),
+            topo_index_map: Vec::new(),
         };
         circuit.topo_order = circuit.compute_topology();
+        let mut map = vec![0; circuit.nets.len()];
+        for (i, &net) in circuit.topo_order.iter().enumerate() {
+            map[net] = i;
+        }
+        circuit.topo_index_map = map;
         circuit
     }
 
@@ -211,5 +218,9 @@ impl Circuit {
             .collect();
 
         Circuit::new(sub_nodes, sub_nets, sub_inputs, sub_outputs)
+    }
+
+    pub fn get_topo_index(&self, net: NetId) -> usize {
+        self.topo_index_map[net]
     }
 }

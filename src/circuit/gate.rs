@@ -64,12 +64,4 @@ impl Gate {
         outputs
     }
     
-    pub fn color(&self) -> &'static str {
-        match self {
-            Gate::And => "lightcoral",
-            Gate::Or | Gate::FullAdder => "lightskyblue",
-            Gate::Xor | Gate::HalfAdder | Gate::Xor3 => "palegreen2",
-            Gate::Maj => "gold",
-        }
-    }
 }

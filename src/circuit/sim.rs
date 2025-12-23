@@ -48,26 +48,26 @@ impl<'a> Simulator<'a> {
             })
             .collect()
     }
+
+    pub fn run(&mut self, inputs: &[bool]) -> Vec<bool> {
+        self.set_inputs(inputs);
+        self.step();
+        self.outputs()
+    }
     
     pub fn eval(circuit: &'a Circuit, inputs: &[bool]) -> Vec<bool> {
         let mut sim = Simulator::new(circuit);
-        sim.set_inputs(inputs);
-        sim.step();
-        sim.outputs()
-    }
-}
-
-impl Circuit {
-    pub fn eval(&self, inputs: &[bool]) -> Vec<bool> {
-        Simulator::eval(self, inputs)
+        sim.run(inputs)
     }
 
-    pub fn get_tt(&self) -> Vec<Vec<bool>> {
-        let n = self.inputs().len();
+    pub fn get_tt(circuit: &'a Circuit) -> Vec<Vec<bool>> {
+        let n = circuit.inputs().len();
         assert!(n <= usize::BITS as usize, "too many inputs");
 
         let rows = 1usize << n;
         let mut table = Vec::with_capacity(rows);
+        
+        let mut sim = Simulator::new(circuit); 
 
         for mask in 0..rows {
             let mut inputs = Vec::with_capacity(n);
@@ -75,10 +75,8 @@ impl Circuit {
                 inputs.push(((mask >> i) & 1) != 0);
             }
 
-            let out = self.eval(&inputs);
-            table.push(out);
+            table.push(sim.run(&inputs));
         }
-
         table
     }
 }

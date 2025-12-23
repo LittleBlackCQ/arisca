@@ -1,5 +1,7 @@
-use crate::bipoly::mono::{Monomial, VarId};
-use crate::circuit::{Circuit, gate::Gate, basics::{Node, NetId}};
+use super::mono::{Monomial, VarId};
+use super::spec::CircuitSpec;
+use crate::circuit::*;
+
 use num_bigint::BigInt;
 use num_traits::{Zero, One, Signed}; // Signed trait needed for abs()
 use log::{info, debug, warn};
@@ -145,16 +147,24 @@ impl Polynomial {
     }
 }
 
-impl Gate {
-    pub fn polynomial(&self, inputs: &[VarId], outputs: &[VarId]) -> Vec<Polynomial> {
-        assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {} in polynomial.", self.name());
-        let mut res = vec![Polynomial::zero(); self.n_outputs()];
+pub trait NodePoly {
+    fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
+    where F: Fn(NetId) -> VarId;
+}
+
+impl NodePoly for Node {
+    fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
+    where F: Fn(NetId) -> VarId {
+        let inputs: Vec<VarId> = self.inputs().iter().map(|lit| map(lit.net())).collect();
+        let outputs: Vec<VarId> = self.outputs().iter().map(|net| map(*net)).collect();
         
         let one = BigInt::one();
         let two = BigInt::from(2);
         let four = BigInt::from(4);
 
-        match self {
+        let mut res = vec![Polynomial::zero(); self.gate().n_outputs()];
+
+        match self.gate() {
             Gate::And => { // x=ab
                 res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
             }
@@ -204,19 +214,7 @@ impl Gate {
                         - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
             }
         }
-        assert_eq!(res.len(), self.n_outputs(), "Wrong number of outputs for {} in polynomial.", self.name());
-        res
-    }
 
-}
-
-impl Node {
-    pub fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
-    where F: Fn(NetId) -> VarId {
-        let inputs: Vec<VarId> = self.inputs().iter().map(|lit| map(lit.net())).collect();
-        let outputs: Vec<VarId> = self.outputs().iter().map(|net| map(*net)).collect();
-        
-        let mut res = self.gate().polynomial(&inputs, &outputs);
         for p in res.iter_mut() {
             for lit in self.inputs().iter() {
                 if lit.negative() {
@@ -228,60 +226,18 @@ impl Node {
     }
 }
 
-impl Circuit {
-    pub fn check_multiplier(&self) -> bool {
-        let mut net_to_topo = vec![0u32; self.nets().len()];
-        for (i, &net) in self.topology_order().iter().enumerate() {
-            net_to_topo[net] = i as u32;
-        }
-        let to_topo = |n: usize| net_to_topo[n];
+pub struct PolyVerifier;
 
-        let build_poly = |iter: &mut dyn Iterator<Item = NetId>| -> Polynomial {
-            iter.fold(Polynomial::zero(), |acc, net| {
-                let var_id = to_topo(net);
-                acc * Polynomial::constant(BigInt::from(2)) + Polynomial::var(var_id, BigInt::one())
-            })
-        };
+impl PolyVerifier {
+    pub fn verify<S: CircuitSpec>(circuit: &Circuit, spec: S) -> bool {
+        let mut golden_poly = spec.build_golden(circuit);
+        let modulus = spec.modulus(circuit);
+        debug!("Golden polynomial terms: {:?}\n{:?}", golden_poly.terms().len(), golden_poly);
+        for &net in circuit.topology_order().iter().rev() {
+            if let Some(driver) = circuit.nets()[net].driver() {
+                let node = &circuit.nodes()[driver];
 
-        let inputs = self.inputs();
-        let half_len = inputs.len() / 2;
-
-        // Input 1 (Lower half)
-        let input1 = build_poly(
-            &mut inputs[0..half_len].iter().rev().copied()
-        );
-
-        // Input 2 (Upper half)
-        let input2 = build_poly(
-            &mut inputs[half_len..].iter().rev().copied()
-        );
-
-        // Output (Golden)
-        let mut golden_output = build_poly(
-            &mut self.outputs().iter().rev().map(|l| l.net())
-        );
-
-        for output in self.outputs() {
-            if output.negative() {
-                let var_id = to_topo(output.net());
-                golden_output.neg_var(&var_id);
-            }
-        }
-
-        // Modulus: 2 ^ outputs.len()
-        // Use BigInt shift for efficiency: 1 << len
-        let mod_const = BigInt::one() << self.outputs().len();
-        
-        let mut golden = golden_output - (input1 * input2);
-
-        debug!("Golden Polynomial built. Terms: {:?}\n{:?}", golden.terms().len(), golden);
-
-        // Backward Reduction
-        for &net in self.topology_order().iter().rev() {
-            if let Some(driver) = self.nets()[net].driver() {
-                let node = &self.nodes()[driver];
-
-                let gate_polys = node.poly_eval(|n| to_topo(n));
+                let gate_polys = node.poly_eval(|n| circuit.get_topo_index(n) as u32);
                 let output_idx = node.outputs().iter().position(|&n| n == net).unwrap();
                 let gate_poly = gate_polys[output_idx].clone();
                 debug!("Polynomial for Node {:?} Net {:?}: {:?}", driver, net, gate_poly);
@@ -293,18 +249,20 @@ impl Circuit {
                     }
                     
                     let var = term.term().first().unwrap();
-                    let factor = golden.divide_by_var(var);
+                    let factor = golden_poly.divide_by_var(var);
                     
                     if !factor.is_zero() {
-                        golden.sub_assign(&(gate_poly * factor));
+                        golden_poly.sub_assign(&(gate_poly * factor));
                     }
                 }
-                golden.mod_by_const(&mod_const);
-                debug!("Terms after reduce: {:?}", golden.terms().len());
+                if let Some(m) = &modulus {
+                    golden_poly.mod_by_const(m);
+                }
+                debug!("Terms after reduce: {:?}", golden_poly.terms().len());
             }
         }
 
-        let success = golden.is_zero();
+        let success = golden_poly.is_zero();
         info!("Verification Result: {}", success);
         success
     }

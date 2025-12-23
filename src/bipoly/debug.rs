@@ -1,4 +1,5 @@
-use super::{poly::Polynomial, mono::Monomial};
+use super::*;
+
 use num_traits::{One, Signed};
 use std::fmt;
 

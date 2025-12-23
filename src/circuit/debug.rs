@@ -93,7 +93,7 @@ impl Circuit {
                     let driver_node = &self.nodes[driver_idx];
                     let label_attr = if driver_node.outputs().len() > 1 {
                         let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
-                        format!("label=\"{}net{}\", ", out_idx, src_net)
+                        format!("label=\"{}\", ", out_idx)
                     } else {
                         String::new()
                     };

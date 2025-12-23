@@ -1,22 +1,23 @@
+use bitvec::prelude::*;
 use super::Circuit;
 
 pub struct Simulator<'a> {
     circuit: &'a Circuit,
-    net_values: Vec<bool>,
+    net_values: BitVec,
 }
 
 impl<'a> Simulator<'a> {
     pub fn new(circuit: &'a Circuit) -> Self {
         Simulator {
             circuit,
-            net_values: vec![false; circuit.nets.len()],
+            net_values: BitVec::repeat(false, circuit.nets().len()),
         }
     }
 
     pub fn set_inputs(&mut self, values: &[bool]) {
         assert_eq!(values.len(), self.circuit.inputs.len());
         for (i, &net) in self.circuit.inputs.iter().enumerate() {
-            self.net_values[net] = values[i];
+            self.net_values.set(net, values[i]);
         }
     }
 
@@ -24,17 +25,15 @@ impl<'a> Simulator<'a> {
         for net in self.circuit.topology_order() {
             if let Some(node) = self.circuit.nets()[net].driver() {
                 let node = &self.circuit.nodes()[node];
-                let mut ins = Vec::<bool>::with_capacity(node.inputs().len());
-                for lit in node.inputs() {
-                    let mut v = self.net_values[lit.net()];
-                    if lit.negative() {
-                        v = !v;
-                    }
-                    ins.push(v);
-                }
+                let ins: Vec<bool> = node.inputs().iter()
+                    .map(|lit| {
+                        let v = self.net_values[lit.net()];
+                        if lit.negative() { !v } else { v }
+                    })
+                    .collect();
                 let out_val = node.gate().logic(&ins);
                 for (i, &net) in node.outputs().iter().enumerate() {
-                    self.net_values[net] = out_val[i];
+                    self.net_values.set(net, out_val[i]);
                 }
             }
         }

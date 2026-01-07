@@ -160,11 +160,8 @@ pub struct AlgebraicCircuit<'a> {
 
 impl<'a> AlgebraicCircuit<'a> { 
     pub fn new(circuit: &'a Circuit) -> Self {
-        let topo_order = circuit.topology_nets();
         let mut net_to_var = vec![0; circuit.nets().len()];
-        for (var_id, &net_id) in topo_order.iter().enumerate() {
-            net_to_var[net_id] = var_id as VarId;
-        }
+        circuit.topology_nets().iter().enumerate().for_each(|(i, &v)| net_to_var[v] = i as VarId);
         Self {
             inner: circuit,
             net_to_var

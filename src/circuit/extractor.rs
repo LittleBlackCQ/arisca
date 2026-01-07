@@ -32,25 +32,28 @@ impl GenericExtractor {
         root: NetId, 
         cut: &BTreeSet<NetId>, 
         strategy: &dyn ExtractorStrategy,
+        sim: &mut Simulator,
     ) -> Option<Match> {
         if cut.len() != strategy.cut_size() { return None; }
 
         let mut cone_nets = Vec::new();
         
-        circuit.bfs_cone(root, true, |n| {
-            if cut.contains(&n) { return false; }
-            if root != n { cone_nets.push(n); }
-            true
-        });
-        
-        let inputs: Vec<NetId> = cut.iter().copied().collect();
-        let subcircuit = circuit.subcircuit(
-            &[&[root], &cone_nets[..]].concat(),
-            &inputs,
-            &[NetLit::new(root, false)],
-        );
+        fn topo_dfs(circuit: &Circuit, net: NetId, cut: &BTreeSet<NetId>, cone_nets: &mut Vec<NetId>) {
+            if cone_nets.contains(&net) || cut.contains(&net) { return; }
 
-        let tt: Vec<bool> = Simulator::get_tt(&subcircuit).iter().map(|r| r[0]).collect();
+            if let Some(driver) = circuit.nets_at(net).driver() {
+                for input in circuit.nodes_at(driver).inputs() {
+                    topo_dfs(circuit, input.net(), cut, cone_nets);
+                }
+            }
+            cone_nets.push(net);
+        }
+
+        topo_dfs(circuit, root, cut, &mut cone_nets);
+
+        let inputs: Vec<NetId> = cut.iter().copied().collect();
+        let tt: Vec<bool> = sim.get_partial_tt(&inputs, &[cone_nets.as_slice(), &[root]].concat(), &[root]).iter().map(|r| r[0]).collect();
+      
         strategy.match_tt(&tt).map(|(neg, in_negs)| Match { 
             root, cut: inputs, cone_nets, 
             output_negated: neg, input_negations: in_negs, gate: strategy.target_gate(),
@@ -58,12 +61,14 @@ impl GenericExtractor {
     }
 
     pub fn run<S: ExtractorStrategy>(circuit: &Circuit, strategy: S) -> Circuit {
+        let mut sim = Simulator::new(circuit);
+
         let cut_db = circuit.get_cuts(strategy.cut_size(), 20);
         let mut matches = Vec::new();
 
         for root in circuit.topology_nets() {
             for cut in cut_db[root].iter() {
-                if let Some(m) = Self::try_match(circuit, root, cut, &strategy) {
+                if let Some(m) = Self::try_match(circuit, root, cut, &strategy, &mut sim) {
                     matches.push(m);
                     break;
                 }
@@ -210,6 +215,8 @@ impl ExtractorStrategy for MajExtractor {
 pub struct AdderExtractor;
 impl AdderExtractor {
     pub fn run(circuit: &Circuit) -> Circuit {
+        let mut sim = Simulator::new(circuit);
+
         let cut_db = circuit.get_cuts(3, 20);
         let mut candidates: HashMap<Vec<usize>, Vec<Match>> = HashMap::new();
         let strategies: [&dyn ExtractorStrategy; 4] = [
@@ -219,7 +226,7 @@ impl AdderExtractor {
         for &root in circuit.topology_nets().iter() {
             for cut in &cut_db[root] {
                 for strategy in strategies {
-                    if let Some(m) = GenericExtractor::try_match(circuit, root, cut, strategy) {
+                    if let Some(m) = GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim) {
                         candidates.entry(m.cut.clone()).or_default().push(m);
                     }
                 }
@@ -397,7 +404,7 @@ mod tests {
         let gate_type = new_circuit.nodes_at(driver_node).gate();
         assert!(matches!(gate_type, Gate::Xor));
         assert_eq!(new_circuit.nodes().len(), 1);
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 
     #[test]
@@ -442,7 +449,7 @@ mod tests {
         assert!(matches!(gate1, Gate::Xor3));
         assert!(matches!(gate2, Gate::Xor3));
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 
     #[test]
@@ -492,7 +499,7 @@ mod tests {
         let side_node = new_circuit.nodes_at(side_driver);
         assert_eq!(side_node.inputs().len(), 2);
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 
     #[test]
@@ -546,7 +553,7 @@ mod tests {
         let gate_type = new_circuit.nodes_at(driver_node).gate();
         assert!(matches!(gate_type, Gate::Xor));
         assert_eq!(new_circuit.nodes().len(), 1);
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 
       #[test]
@@ -575,7 +582,7 @@ mod tests {
         assert_eq!(new_circuit.outputs().len(), 1);
 
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 
     #[test]
@@ -747,7 +754,7 @@ mod tests {
         assert_eq!(new_circuit.nodes().len(), 1);
         assert_eq!(*new_circuit.nodes_at(0).gate(), Gate::FullAdder);
 
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
 
         assert_eq!(new_circuit.inputs().len(), 3);
         assert_eq!(new_circuit.outputs().len(), 2);
@@ -812,7 +819,7 @@ mod tests {
         let ha = new_circuit.nodes_at(new_circuit.nets_at(ha1_sum).driver().unwrap());
         assert_eq!(*ha.gate(), Gate::HalfAdder);
 
-        assert_eq!(Simulator::get_tt(&circuit), Simulator::get_tt(&new_circuit));
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
 
         assert_eq!(new_circuit.inputs().len(), 3);
         assert_eq!(new_circuit.outputs().len(), 4);

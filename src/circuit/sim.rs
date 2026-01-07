@@ -1,5 +1,5 @@
 use bitvec::prelude::*;
-use super::Circuit;
+use super::*;
 
 pub struct Simulator<'a> {
     circuit: &'a Circuit,
@@ -14,32 +14,47 @@ impl<'a> Simulator<'a> {
         }
     }
 
-    pub fn set_inputs(&mut self, values: &[bool]) {
-        assert_eq!(values.len(), self.circuit.inputs.len());
-        for (i, &net) in self.circuit.inputs.iter().enumerate() {
-            self.net_values.set(net, values[i]);
-        }
-    }
+    fn compute(
+        &mut self, 
+        input_nets: &[NetId], 
+        input_values: &[bool], 
+        internal_nets: &[NetId], 
+        targets: &[NetId]
+    ) -> Vec<bool> {
+        debug_assert_eq!(input_nets.len(), input_values.len());
 
-    pub fn step(&mut self) {
-        for &net in self.circuit.topology_nets().iter() {
-            if let Some(node) = self.circuit.nets_at(net).driver() {
-                let node = self.circuit.nodes_at(node);
-                let ins: Vec<bool> = node.inputs().iter()
+        for (i, &net) in input_nets.iter().enumerate() {
+            self.net_values.set(net, input_values[i]);
+        }
+
+        for &net in internal_nets {
+            if let Some(node_id) = self.circuit.nets_at(net).driver() {
+                let node = self.circuit.nodes_at(node_id);
+                // Collect inputs for the gate from current state
+                let gate_inputs: Vec<bool> = node.inputs().iter()
                     .map(|lit| {
                         let v = self.net_values[lit.net()];
                         if lit.negative() { !v } else { v }
                     })
                     .collect();
-                let out_val = node.gate().logic(&ins);
-                for (i, &net) in node.outputs().iter().enumerate() {
-                    self.net_values.set(net, out_val[i]);
+                
+                let output_values = node.gate().logic(&gate_inputs);
+                
+                // Update driver's output nets
+                for (i, &out_net) in node.outputs().iter().enumerate() {
+                    self.net_values.set(out_net, output_values[i]);
                 }
             }
         }
+
+        targets.iter().map(|&net| self.net_values[net]).collect()
     }
-    
-    pub fn outputs(&self) -> Vec<bool> {
+
+    fn run_full(&mut self, inputs: &[bool]) -> Vec<bool> {
+        // Run simulation updating all nets in topological order
+        self.compute(self.circuit.inputs(), inputs, &self.circuit.topology_nets(), &[]);
+
+        // Extract final circuit outputs handling literal negation
         self.circuit.outputs().iter()
             .map(|lit| {
                 let v = self.net_values[lit.net()];
@@ -48,41 +63,58 @@ impl<'a> Simulator<'a> {
             .collect()
     }
 
-    pub fn run(&mut self, inputs: &[bool]) -> Vec<bool> {
-        self.set_inputs(inputs);
-        self.step();
-        self.outputs()
-    }
-    
-    pub fn eval(circuit: &'a Circuit, inputs: &[bool]) -> Vec<bool> {
-        let mut sim = Simulator::new(circuit);
-        sim.run(inputs)
+    pub fn eval(&mut self, inputs: &[bool]) -> Vec<bool> {
+        self.run_full(inputs)
     }
 
-    pub fn get_tt(circuit: &'a Circuit) -> Vec<Vec<bool>> {
-        let n = circuit.inputs().len();
-        assert!(n <= usize::BITS as usize, "too many inputs");
+    pub fn get_partial_tt(
+        &mut self,
+        inputs_nets: &[NetId],
+        internal_nets: &[NetId], 
+        targets: &[NetId]
+    ) -> Vec<Vec<bool>> {
+        let k = inputs_nets.len();
+        assert!(k <= 16, "too many inputs for full TT");
 
-        let rows = 1usize << n;
+        let rows = 1 << k;
         let mut table = Vec::with_capacity(rows);
-        
-        let mut sim = Simulator::new(circuit); 
 
+        // internal nets should be sorted by topology order
         for mask in 0..rows {
-            let mut inputs = Vec::with_capacity(n);
-            for i in 0..n {
-                inputs.push(((mask >> i) & 1) != 0);
-            }
-
-            table.push(sim.run(&inputs));
+            let inputs: Vec<bool> = (0..k).map(|i| (mask >> i) & 1 != 0).collect();
+            table.push(self.compute(inputs_nets, &inputs, internal_nets, targets));
         }
         table
     }
 
-    pub fn get_tt_transposed(circuit: &'a Circuit) -> Vec<Vec<bool>> { 
-        let tt = Simulator::get_tt(circuit);
+    pub fn get_tt(&mut self) -> Vec<Vec<bool>> {
+        let n = self.circuit.inputs().len();
+        assert!(n <= 16, "too many inputs for full TT");
+
+        let rows = 1 << n;
+        let mut table = Vec::with_capacity(rows);
+
+        for mask in 0..rows {
+            let inputs: Vec<bool> = (0..n).map(|i| (mask >> i) & 1 != 0).collect();
+            table.push(self.run_full(&inputs));
+        }
+        table
+    }
+
+    pub fn get_tt_transposed(&mut self) -> Vec<Vec<bool>> { 
+        let tt = self.get_tt();
         (0..tt[0].len()).map(|i| {
             tt.iter().map(|row| row[i].clone()).collect()
         }).collect()
+    }
+
+    pub fn compute_tt(circuit: &'a Circuit) -> Vec<Vec<bool>> {
+        let mut sim = Simulator::new(circuit);
+        sim.get_tt()
+    }
+
+    pub fn compute_tt_transposed(circuit: &'a Circuit) -> Vec<Vec<bool>> {
+        let mut sim = Simulator::new(circuit);
+        sim.get_tt_transposed()
     }
 }

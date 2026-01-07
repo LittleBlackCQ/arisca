@@ -44,7 +44,7 @@ impl Gate {
     }
 
     pub fn logic(self, inputs: &[bool]) -> Vec<bool> {
-        assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {:?} in logic.", self.name());
+        debug_assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {:?} in logic.", self.name());
         let mut outputs = vec![false; self.n_outputs()];
         match self {
             Gate::And => outputs[0] = inputs[0] & inputs[1],

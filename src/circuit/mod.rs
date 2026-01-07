@@ -113,7 +113,7 @@ impl Circuit {
                 }
             }
         }
-        assert_eq!(
+        debug_assert_eq!(
             order.len(), net_num,
             "Topology sort failed: cycle or inconsistent output_topology"
         );
@@ -196,9 +196,13 @@ impl Circuit {
             let new_net = new_circuit.add_input();
             net_map.insert(old_net, new_net);
         }
-
-        for net_id in self.topology_nets().iter() {
-            if !nets.contains(net_id) || net_map.contains_key(net_id) { continue; }
+        
+        let mut net_to_topo = vec![0; self.nets().len()];
+        self.topology_nets().iter().enumerate().for_each(|(i, &v)| net_to_topo[v] = i);
+        let mut sorted_nets = nets.to_vec();
+        sorted_nets.sort_by_key(|&v| net_to_topo[v]);
+        for net_id in sorted_nets.iter() {
+            if net_map.contains_key(net_id) { continue; }
             if let Some(driver) = self.nets_at(*net_id).driver() {
                 let node = self.nodes_at(driver);
                 let new_inputs: Vec<NetLit> = node.inputs().iter()
@@ -225,7 +229,7 @@ impl Circuit {
         new_circuit
     }
 
-    pub fn remove_dead(&self) -> Self { 
+    pub fn remove_dead(&self) -> Self {
         let mut is_alive = vec![false; self.nets().len()];
         
         for output in self.outputs() {

@@ -22,9 +22,9 @@ impl<'a> Simulator<'a> {
     }
 
     pub fn step(&mut self) {
-        for net in self.circuit.topology_order() {
-            if let Some(node) = self.circuit.nets()[net].driver() {
-                let node = &self.circuit.nodes()[node];
+        for &net in self.circuit.topology_nets().iter() {
+            if let Some(node) = self.circuit.nets_at(net).driver() {
+                let node = self.circuit.nodes_at(node);
                 let ins: Vec<bool> = node.inputs().iter()
                     .map(|lit| {
                         let v = self.net_values[lit.net()];
@@ -77,5 +77,12 @@ impl<'a> Simulator<'a> {
             table.push(sim.run(&inputs));
         }
         table
+    }
+
+    pub fn get_tt_transposed(circuit: &'a Circuit) -> Vec<Vec<bool>> { 
+        let tt = Simulator::get_tt(circuit);
+        (0..tt[0].len()).map(|i| {
+            tt.iter().map(|row| row[i].clone()).collect()
+        }).collect()
     }
 }

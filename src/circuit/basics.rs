@@ -31,6 +31,7 @@ impl NetLit {
     }
 }
 
+#[derive(Clone, Hash)]
 pub struct Node {
     name: Option<Box<str>>,
     gate: Gate,
@@ -65,6 +66,7 @@ impl Node {
     }
 }
 
+#[derive(Clone, Hash)]
 pub struct Net {
     name: Option<Box<str>>,
     driver: Option<NodeId>,

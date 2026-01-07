@@ -28,10 +28,10 @@ impl fmt::Debug for Net {
 impl fmt::Debug for Circuit { 
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for i in 0..self.nodes.len() {
-            write!(f, "Node {:?}: {:?}\n", i, self.nodes[i])?;
+            write!(f, "Node {:?}: {:?}\n", i, self.nodes_at(i))?;
         }
         for i in 0..self.nets.len() {
-            write!(f, "Net {:?}: {:?}\n", i, self.nets[i])?;
+            write!(f, "Net {:?}: {:?}\n", i, self.nets_at(i))?;
         }
         write!(f, "Inputs: {:?}\n", self.inputs)?;
         write!(f, "Outputs: {:?}\n", self.outputs)
@@ -58,13 +58,13 @@ impl Circuit {
         let mut net_levels = vec![0; self.nets.len()];
         let mut node_levels = vec![0; self.nodes.len()];
 
-        for &net_id in &self.topo_order {
-            if let Some(driver_id) = self.nets[net_id].driver() {
+        for &net_id in self.topology_nets().iter() {
+            if let Some(driver_id) = self.nets_at(net_id).driver() {
                 net_levels[net_id] = node_levels[driver_id];
             } else {
                 net_levels[net_id] = 0;
             }
-            for &load_id in self.nets[net_id].loads() {
+            for &load_id in self.nets_at(net_id).loads() {
                 node_levels[load_id] = node_levels[load_id].max(net_levels[net_id] + 1);
             }
         }
@@ -88,14 +88,14 @@ impl Circuit {
                 let src_net = input_lit.net();
                 let style = if input_lit.negative() { "dashed" } else { "solid" };
                 
-                if let Some(driver_idx) = self.nets[src_net].driver() {
+                if let Some(driver_idx) = self.nets_at(src_net).driver() {
                     // Logic added here for multi-output labeling
-                    let driver_node = &self.nodes[driver_idx];
+                    let driver_node = self.nodes_at(driver_idx);
                     let label_attr = if driver_node.outputs().len() > 1 {
                         let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
-                        format!("label=\"{}\", ", out_idx)
+                        format!("label=\"{}-{}\", ", src_net, out_idx)
                     } else {
-                        String::new()
+                        format!("label=\"{}\", ", src_net)
                     };
                     dot.push_str(&format!("    node_{} -> node_{} [{}style=\"{}\"];\n", driver_idx, node_idx, label_attr, style));
                 } else if self.inputs.contains(&src_net) {
@@ -107,14 +107,14 @@ impl Circuit {
         for (out_idx, out_lit) in self.outputs.iter().enumerate() {
             let src_net = out_lit.net();
             let style = if out_lit.negative() { "dashed" } else { "solid" };
-            if let Some(driver_idx) = self.nets[src_net].driver() {
+            if let Some(driver_idx) = self.nets_at(src_net).driver() {
                 // Logic added here for multi-output labeling to primary outputs
-                let driver_node = &self.nodes[driver_idx];
+                let driver_node = self.nodes_at(driver_idx);
                 let label_attr = if driver_node.outputs().len() > 1 {
                     let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
-                    format!("label=\"{}\", ", out_idx)
+                    format!("label=\"{}-{}\", ", src_net, out_idx)
                 } else {
-                    String::new()
+                    format!("label=\"{}\", ", src_net)
                 };
                 dot.push_str(&format!("    node_{} -> out_{} [{}style=\"{}\"];\n", driver_idx, out_idx, label_attr, style));
             } else if self.inputs.contains(&src_net) {

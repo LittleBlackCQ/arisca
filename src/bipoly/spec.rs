@@ -1,25 +1,26 @@
 use crate::circuit::*;
 use super::Polynomial;
+use super::poly::AlgebraicCircuit;
 use num_bigint::BigInt;
 use num_traits::One;
 
 pub trait CircuitSpec {
-    fn build_golden(&self, circuit: &Circuit) -> Polynomial;
-    fn modulus(&self, circuit: &Circuit) -> Option<BigInt>;
+    fn build_golden(&self, ac: &AlgebraicCircuit) -> Polynomial;
+    fn modulus(&self, ac: &AlgebraicCircuit) -> Option<BigInt>;
 }
 
 pub struct MultiplierSpec;
 
 impl CircuitSpec for MultiplierSpec {
-    fn build_golden(&self, circuit: &Circuit) -> Polynomial {
+    fn build_golden(&self, ac: &AlgebraicCircuit) -> Polynomial {
         let build_poly = |iter: &mut dyn Iterator<Item = NetId>| -> Polynomial {
             iter.fold(Polynomial::zero(), |acc, net| {
-                let var_id = circuit.get_topo_index(net) as u32;
+                let var_id = ac.var(net);
                 acc * Polynomial::constant(BigInt::from(2)) + Polynomial::var(var_id, BigInt::one())
             })
         };
 
-        let inputs = circuit.inputs();
+        let inputs = ac.inner.inputs();
         let half = inputs.len() / 2;
         
         let poly_a = build_poly(
@@ -30,17 +31,17 @@ impl CircuitSpec for MultiplierSpec {
         );
         
         let mut golden = build_poly(
-            &mut circuit.outputs().iter().rev().map(|l| l.net())
+            &mut ac.inner.outputs().iter().rev().map(|l| l.net())
         );
-        for output in circuit.outputs() {
+        for output in ac.inner.outputs() {
             if output.negative() {
-                golden.neg_var(&(circuit.get_topo_index(output.net()) as u32));
+                golden.neg_var(&(ac.var(output.net())));
             }
         }
         golden - poly_a * poly_b
     }
 
-    fn modulus(&self, circuit: &Circuit) -> Option<BigInt> {
-        Some(BigInt::from(1) << circuit.outputs().len())
+    fn modulus(&self, ac: &AlgebraicCircuit) -> Option<BigInt> {
+        Some(BigInt::from(1) << ac.inner.outputs().len())
     }
 }

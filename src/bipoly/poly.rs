@@ -1,9 +1,12 @@
 use super::mono::{Monomial, VarId};
 use super::spec::CircuitSpec;
+use super::strategy::Strategy;
 use crate::circuit::*;
 
 use num_bigint::BigInt;
-use num_traits::{Zero, One, Signed}; // Signed trait needed for abs()
+use num_traits::{Zero, One, Signed};
+use std::collections::HashMap;
+use std::time::Instant;
 use log::{info, debug, warn};
 
 #[derive(Clone)]
@@ -48,13 +51,16 @@ impl Polynomial {
         res
     }
 
-    pub fn divide_by_var(&self, v: &VarId) -> Self {
+    pub fn divide_by_term(&self, t: &[VarId]) -> Self {
         let mut res = Polynomial::zero();
-        for m in self.terms.iter() {
+        'outer: for m in self.terms.iter() {
             let mut new_m = m.clone();
-            if new_m.remove_var(v) {
-                res.insert(new_m);
-            } 
+            for v in t {
+                if !new_m.remove_var(v) {
+                    continue 'outer;
+                }
+            }
+            res.insert(new_m);
         }
         res
     }
@@ -78,7 +84,6 @@ impl Polynomial {
         let pos = self.terms.binary_search(&m);
         match pos {
             Ok(idx) => {
-                // add_coeff now expects &BigInt
                 self.terms[idx].add_coeff(m.coeff());
                 if self.terms[idx].coeff().is_zero() {
                     self.terms.remove(idx);
@@ -92,7 +97,7 @@ impl Polynomial {
     }
 
     pub fn neg_var(&mut self, var: &VarId) {
-        let poly = self.divide_by_var(var);
+        let poly = self.divide_by_term(&[*var]);
         for m in self.terms.iter_mut() {
             if m.contains(var) {
                 m.neg_coeff();
@@ -147,123 +152,149 @@ impl Polynomial {
     }
 }
 
-pub trait NodePoly {
-    fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
-    where F: Fn(NetId) -> VarId;
+
+pub struct AlgebraicCircuit<'a> {
+    pub inner: &'a Circuit,
+    net_to_var: Vec<VarId>
 }
 
-impl NodePoly for Node {
-    fn poly_eval<F>(&self, map: F) -> Vec<Polynomial> 
-    where F: Fn(NetId) -> VarId {
-        let inputs: Vec<VarId> = self.inputs().iter().map(|lit| map(lit.net())).collect();
-        let outputs: Vec<VarId> = self.outputs().iter().map(|net| map(*net)).collect();
-        
+impl<'a> AlgebraicCircuit<'a> { 
+    pub fn new(circuit: &'a Circuit) -> Self {
+        let topo_order = circuit.topology_nets();
+        let mut net_to_var = vec![0; circuit.nets().len()];
+        for (var_id, &net_id) in topo_order.iter().enumerate() {
+            net_to_var[net_id] = var_id as VarId;
+        }
+        Self {
+            inner: circuit,
+            net_to_var
+        }
+    }
+
+    pub fn var(&self, net: NetId) -> VarId {
+        self.net_to_var[net]
+    }
+}
+pub struct PolyVerifier;
+impl PolyVerifier {
+    fn init_poly_map(ac: &AlgebraicCircuit) -> HashMap<NetId, Polynomial> {
+        let mut poly_map = HashMap::new();
+
         let one = BigInt::one();
         let two = BigInt::from(2);
         let four = BigInt::from(4);
 
-        let mut res = vec![Polynomial::zero(); self.gate().n_outputs()];
+        for node in ac.inner.nodes() {
+            let inputs: Vec<VarId> = node.inputs().iter().map(|lit| ac.var(lit.net())).collect();
+            let outputs: Vec<VarId> = node.outputs().iter().map(|net| ac.var(*net)).collect();
+            
+            let mut res = vec![Polynomial::zero(); node.gate().n_outputs()];
 
-        match self.gate() {
-            Gate::And => { // x=ab
-                res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
-            }
-            Gate::Or => { // x=a+b-ab
-                res[0] += Polynomial::var(outputs[0], one.clone()) -
-                         (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1]], one.clone()));
-            }
-            Gate::Xor => { // x=a+b-2ab
-                res[0] += Polynomial::var(outputs[0], one.clone()) -
-                         (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1]], two.clone()));
-            }
-            Gate::Xor3 => { // x=a+b+c-2(ab+bc+ca)+4abc
-                let sum_linear = Polynomial::var(inputs[0], one.clone()) + Polynomial::var(inputs[1], one.clone()) + Polynomial::var(inputs[2], one.clone());
-                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], two.clone()) + Polynomial::term(&[inputs[1], inputs[2]], two.clone()) + Polynomial::term(&[inputs[0], inputs[2]], two.clone());
-                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], four.clone());
-                
-                res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_linear - sum_quad + cubic);
-            }
-            Gate::Maj => { // x=ab+bc+ca-2abc
-                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], one.clone()) + Polynomial::term(&[inputs[1], inputs[2]], one.clone()) + Polynomial::term(&[inputs[0], inputs[2]], one.clone());
-                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone());
-                res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_quad - cubic);
-            }
-            Gate::HalfAdder => {
-                // s+2c=a+b
-                res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
-                         (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone()));
-                // c = ab
-                res[1] += Polynomial::var(outputs[1], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
-            }
-            Gate::FullAdder => {
-                // s+2c = a+b+c
-                res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
-                         (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        + Polynomial::var(inputs[2], one.clone()));
-                // c = ab+ac+bc-2abc
-                res[1] += Polynomial::var(outputs[1], one.clone()) -
-                         (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
-                        + Polynomial::term(&[inputs[0], inputs[2]], one.clone())
-                        + Polynomial::term(&[inputs[1], inputs[2]], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
-            }
-        }
-
-        for p in res.iter_mut() {
-            for lit in self.inputs().iter() {
-                if lit.negative() {
-                    p.neg_var(&map(lit.net()));
+            match node.gate() {
+                Gate::And => { 
+                    res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
+                }
+                Gate::Or => { 
+                    res[0] += Polynomial::var(outputs[0], one.clone()) -
+                            (Polynomial::var(inputs[0], one.clone())
+                            + Polynomial::var(inputs[1], one.clone())
+                            - Polynomial::term(&[inputs[0], inputs[1]], one.clone()));
+                }
+                Gate::Xor => { 
+                    res[0] += Polynomial::var(outputs[0], one.clone()) -
+                            (Polynomial::var(inputs[0], one.clone())
+                            + Polynomial::var(inputs[1], one.clone())
+                            - Polynomial::term(&[inputs[0], inputs[1]], two.clone()));
+                }
+                Gate::Xor3 => { 
+                    let sum_linear = Polynomial::var(inputs[0], one.clone()) + Polynomial::var(inputs[1], one.clone()) + Polynomial::var(inputs[2], one.clone());
+                    let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], two.clone()) + Polynomial::term(&[inputs[1], inputs[2]], two.clone()) + Polynomial::term(&[inputs[0], inputs[2]], two.clone());
+                    let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], four.clone());
+                    
+                    res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_linear - sum_quad + cubic);
+                }
+                Gate::Maj => { 
+                    let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], one.clone()) + Polynomial::term(&[inputs[1], inputs[2]], one.clone()) + Polynomial::term(&[inputs[0], inputs[2]], one.clone());
+                    let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone());
+                    res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_quad - cubic);
+                }
+                Gate::HalfAdder => {
+                    res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
+                            (Polynomial::var(inputs[0], one.clone())
+                            + Polynomial::var(inputs[1], one.clone()));
+                    res[1] += Polynomial::var(outputs[1], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
+                }
+                Gate::FullAdder => {
+                    res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
+                            (Polynomial::var(inputs[0], one.clone())
+                            + Polynomial::var(inputs[1], one.clone())
+                            + Polynomial::var(inputs[2], one.clone()));
+                    res[1] += Polynomial::var(outputs[1], one.clone()) -
+                            (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
+                            + Polynomial::term(&[inputs[0], inputs[2]], one.clone())
+                            + Polynomial::term(&[inputs[1], inputs[2]], one.clone())
+                            - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
                 }
             }
+
+            for p in res.iter_mut() {
+                for lit in node.inputs().iter() {
+                    if lit.negative() {
+                        p.neg_var(&ac.var(lit.net()));
+                    }
+                }
+            }
+
+            for (i, &net) in node.outputs().iter().enumerate() {
+                poly_map.insert(net, res[i].clone());
+            }
         }
-        res
+
+        poly_map
     }
-}
 
-pub struct PolyVerifier;
+    pub fn verify<S: CircuitSpec, O: Strategy>(
+        circuit: &Circuit, 
+        spec: S, 
+        strategy: O
+    ) -> bool {
+        let start_time = Instant::now();
 
-impl PolyVerifier {
-    pub fn verify<S: CircuitSpec>(circuit: &Circuit, spec: S) -> bool {
-        let mut golden_poly = spec.build_golden(circuit);
-        let modulus = spec.modulus(circuit);
+        let ac = AlgebraicCircuit::new(circuit);
+
+        let mut poly_map = Self::init_poly_map(&ac);
+
+        strategy.apply(&ac, &mut poly_map);
+
+        let mut golden_poly = spec.build_golden(&ac);
+        let modulus = spec.modulus(&ac);
+        
         debug!("Golden polynomial terms: {:?}\n{:?}", golden_poly.terms().len(), golden_poly);
-        for &net in circuit.topology_order().iter().rev() {
-            if let Some(driver) = circuit.nets()[net].driver() {
-                let node = &circuit.nodes()[driver];
+        for &net in circuit.rev_topology_nets().iter() {
+            if let Some(gate_poly) = poly_map.get(&net) {
+                let gate_poly = gate_poly.clone();
+                debug!("Polynomial for Net {:?}: {:?}", net, gate_poly);
 
-                let gate_polys = node.poly_eval(|n| circuit.get_topo_index(n) as u32);
-                let output_idx = node.outputs().iter().position(|&n| n == net).unwrap();
-                let gate_poly = gate_polys[output_idx].clone();
-                debug!("Polynomial for Node {:?} Net {:?}: {:?}", driver, net, gate_poly);
-
-                if let Some(term) = gate_poly.leading_term() {
-                    // Check degree and coefficient (must be 1)
-                    if term.degree() != 1 || !term.coeff().is_one() {
-                        warn!("Node {:?} (Net {:?}) has non-unit leading term: {:?}", driver, net, term);
+                if let Some(mono) = gate_poly.leading_term() {
+                    if mono.degree() != 1 || !mono.coeff().is_one() {
+                        warn!("Net {:?} polynomial has non-unit leading term: {:?}", net, mono);
                     }
                     
-                    let var = term.term().first().unwrap();
-                    let factor = golden_poly.divide_by_var(var);
+                    let factor = golden_poly.divide_by_term(mono.term());
                     
                     if !factor.is_zero() {
-                        golden_poly.sub_assign(&(gate_poly * factor));
-                    }
+                        golden_poly -= gate_poly * factor;
+                    } else { continue; }
                 }
                 if let Some(m) = &modulus {
                     golden_poly.mod_by_const(m);
                 }
-                debug!("Terms after reduce: {:?}", golden_poly.terms().len());
+                debug!("Terms after reducing: {:?}", golden_poly.terms().len());
             }
         }
 
         let success = golden_poly.is_zero();
-        info!("Verification Result: {}", success);
+        info!("Verification {} in {:?}", success, start_time.elapsed());
         success
     }
 }

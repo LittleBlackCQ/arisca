@@ -1,10 +1,8 @@
 use libc::{FILE, fclose, fopen};
 use std::{
-    ffi::{CString, c_char, c_void},
-    path::Path,
-    process::exit
+    ffi::{CString, c_char, c_void}, path::Path
 };
-use log::{warn, error};
+use log::warn;
 
 unsafe extern "C" {
     fn aiger_init() -> *mut c_void;
@@ -59,25 +57,23 @@ struct AigerAnd {
     rhs1: u32,
 }
 
-use crate::circuit::{Circuit, basics::{Net, NetId, NetLit, Node}, gate::Gate};
+use crate::circuit::*;
 
 pub struct AigerParser;
 
 impl AigerParser {
-    pub fn from_aig<P: AsRef<Path>>(path: P) -> Result<Circuit, ()> { 
+    pub fn from_aig<P: AsRef<Path>>(path: P) -> Result<Circuit, String> { 
         let path = path.as_ref();
         let file = CString::new(path.to_str().unwrap()).unwrap();
         let mode = CString::new("r").unwrap();
         let file = unsafe { fopen(file.as_ptr(), mode.as_ptr())};
         if file.is_null() {
-            error!("'{}' not found.", path.display());
-            exit(1);
+            return Err(format!("'{}' not found.", path.display()));
         }
 
         let aiger = unsafe { aiger_init() };
         if !unsafe { aiger_read_from_file(aiger, file) }.is_null() {
-            error!("read file '{}' failed.", path.display());
-            return Err(());
+            return Err(format!("read file '{}' failed.", path.display()));
         }
         unsafe { fclose(file) };
 
@@ -87,59 +83,47 @@ impl AigerParser {
             warn!("aiger file contains unsupported features (bad, constraints, justice, fairness, latches).")
         }
         
-        let maxvar = aiger.maxvar;
-        let mut nets: Vec<Net> = (0..=maxvar)
-            .map(|_| Net::empty())
-            .collect();
-        let mut nodes: Vec<Node> = Vec::new();
-        let mut inputs: Vec<NetId> = Vec::new();
-        let mut outputs: Vec<NetLit> = Vec::new();
-        
-        if !aiger.inputs.is_null() { 
-            for i in 0..aiger.num_inputs {
-                let sym = unsafe { &*aiger.inputs.add(i as usize) };
-                let var = (sym.lit / 2) as usize;
-                inputs.push(var);
-            }
+        let mut circuit = Circuit::empty();
+
+        let maxvar = aiger.maxvar as usize;
+        let mut var_to_net = vec![0; maxvar + 1];
+
+        for i in 0..aiger.num_inputs {
+            let sym = unsafe { &*aiger.inputs.add(i as usize) };
+            let aig_var = (sym.lit / 2) as usize;
+            
+            let net_id = circuit.add_input();
+            var_to_net[aig_var] = net_id;
         }
 
-        if !aiger.ands.is_null() {
-            for i in 0..aiger.num_ands {
-                let and = unsafe { &*aiger.ands.add(i as usize) };
-                let lhs_var = (and.lhs / 2) as usize;
-                let rhs0_var = (and.rhs0 / 2) as usize;
-                let rhs1_var = (and.rhs1 / 2) as usize;
-                
-                let rhs0_neg = (and.rhs0 & 1) != 0;
-                let rhs1_neg = (and.rhs1 & 1) != 0;
+        for i in 0..aiger.num_ands {
+            let and = unsafe { &*aiger.ands.add(i as usize) };
+            let lhs_var = (and.lhs / 2) as usize;
 
-                let node = Node::new(
-                    None, 
-                    Gate::And, 
-                    vec![
-                        NetLit::new(rhs0_var, rhs0_neg),
-                        NetLit::new(rhs1_var, rhs1_neg),
-                    ], 
-                    vec![lhs_var]
-                );
-                let node_id = nodes.len();
-                nodes.push(node);
+            let rhs0_var = (and.rhs0 / 2) as usize;
+            let rhs1_var = (and.rhs1 / 2) as usize;
+            let rhs0_neg = (and.rhs0 & 1) != 0;
+            let rhs1_neg = (and.rhs1 & 1) != 0;
 
-                nets[lhs_var].set_driver(node_id);
-                nets[rhs0_var].add_load(node_id);
-                nets[rhs1_var].add_load(node_id);
-            }
+            let net0 = var_to_net[rhs0_var];
+            let net1 = var_to_net[rhs1_var];
+
+            let inputs = vec![
+                NetLit::new(net0, rhs0_neg),
+                NetLit::new(net1, rhs1_neg),
+            ];
+
+            let output_nets = circuit.add_gate(Gate::And, inputs);
+            var_to_net[lhs_var] = output_nets[0];
         }
 
-        if !aiger.outputs.is_null() {
-            for i in 0..aiger.num_outputs {
-                let sym = unsafe { &*aiger.outputs.add(i as usize) };
-                let var = (sym.lit / 2) as usize;
-                let neg = (sym.lit & 1) != 0;
-                outputs.push(NetLit::new(var, neg));
-            }
+        for i in 0..aiger.num_outputs {
+            let sym = unsafe { &*aiger.outputs.add(i as usize) };
+            let var = (sym.lit / 2) as usize;
+            let neg = (sym.lit & 1) != 0;
+            circuit.set_output(var_to_net[var], neg);
         }
 
-        Ok(Circuit::new(nodes, nets, inputs, outputs))
+        Ok(circuit)
     }
 }

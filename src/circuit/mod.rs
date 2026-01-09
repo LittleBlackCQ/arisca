@@ -7,7 +7,7 @@ pub mod sim;
 
 pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit};
 pub use crate::circuit::gate::Gate;
-use std::collections::{VecDeque, HashMap};
+use std::collections::{VecDeque};
 
 pub struct Circuit {
     nodes: Vec<Node>,
@@ -17,15 +17,6 @@ pub struct Circuit {
 }
 
 impl Circuit {
-    pub fn new(nodes: Vec<Node>, nets: Vec<Net>, inputs: Vec<NetId>, outputs: Vec<NetLit>) -> Self {
-        let circuit = Self { 
-            nodes, 
-            nets, 
-            inputs, 
-            outputs, 
-        };
-        circuit
-    }
 
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
@@ -183,71 +174,6 @@ impl Circuit {
         order
     }
 
-    pub fn subcircuit(
-        &self,
-        nets: &[NetId],
-        inputs: &[NetId],
-        outputs: &[NetLit],
-    ) -> Self {
-        let mut new_circuit = Circuit::empty();
-        let mut net_map = HashMap::new();
-
-        for &old_net in inputs.iter() {
-            let new_net = new_circuit.add_input();
-            net_map.insert(old_net, new_net);
-        }
-        
-        let mut net_to_topo = vec![0; self.nets().len()];
-        self.topology_nets().iter().enumerate().for_each(|(i, &v)| net_to_topo[v] = i);
-        let mut sorted_nets = nets.to_vec();
-        sorted_nets.sort_by_key(|&v| net_to_topo[v]);
-        for net_id in sorted_nets.iter() {
-            if net_map.contains_key(net_id) { continue; }
-            if let Some(driver) = self.nets_at(*net_id).driver() {
-                let node = self.nodes_at(driver);
-                let new_inputs: Vec<NetLit> = node.inputs().iter()
-                    .map(|lit| {
-                        let mapped_net = *net_map.get(&lit.net()).expect("Input net missing");
-                        NetLit::new(mapped_net, lit.negative())
-                    })
-                    .collect();
-
-                let new_output_nets = new_circuit.add_gate(node.gate().clone(), new_inputs);
-                for (i, old_out) in node.outputs().iter().enumerate() {
-                    // TODO: support multiple outputs
-                    if !nets.contains(&old_out) { panic!("one of the outputs is not in the subcircuit nets for {:?}", node) }
-                    net_map.insert(*old_out, new_output_nets[i]);
-                }
-            }
-        }
-
-        for out_lit in outputs.iter() {
-            let mapped_net = net_map.get(&out_lit.net()).expect("Output net missing");
-            new_circuit.set_output(*mapped_net, out_lit.negative());
-        }
-
-        new_circuit
-    }
-
-    pub fn remove_dead(&self) -> Self {
-        let mut is_alive = vec![false; self.nets().len()];
-        
-        for output in self.outputs() {
-            self.bfs_cone(output.net(), true, |net| {
-                if is_alive[net] {
-                    return false;
-                }
-                is_alive[net] = true;
-                true
-            });
-        }
-        let alive_nets: Vec<NetId> = is_alive.iter().enumerate()
-            .filter_map(|(id, &alive)| if alive { Some(id) } else { None })
-            .collect();
-
-        self.subcircuit(&alive_nets, self.inputs(), self.outputs())
-    }
-
 
     pub fn bfs_cone<F>(&self, start: NetId, backward: bool, mut visit: F) 
         where F: FnMut(NetId) -> bool {
@@ -334,59 +260,4 @@ impl Circuit {
         }
     }
 
-}
-
-mod tests {
-    use super::*;
-    #[test]
-    fn test_subcircuit() {
-        let mut circuit = Circuit::empty();
-        
-        let in_0 = circuit.add_input();
-        let in_1 = circuit.add_input();
-        let in_2 = circuit.add_input();
-
-        let ha_outputs =  circuit.add_gate(Gate::HalfAdder, vec![NetLit::positive(in_0), NetLit::positive(in_1)]);
-        let out_0 = ha_outputs[0];
-        let c = ha_outputs[1];
-
-        let out_1 = circuit.add_gate(Gate::And, vec![NetLit::positive(in_2), NetLit::positive(c)])[0];
-
-        circuit.set_output(out_0, false);
-        circuit.set_output(out_1, false);
-
-        let sub_nets = vec![c, out_0];
-        let sub_outputs = vec![NetLit::positive(c), NetLit::positive(out_0)];
-        let sub_inputs = vec![in_0, in_1];
-
-        let sub_circuit = circuit.subcircuit(&sub_nets, &sub_inputs, &sub_outputs);
-        assert_eq!(sub_circuit.nets().len(), 5);
-        assert_eq!(sub_circuit.nodes().len(), 1);
-        assert_eq!(*sub_circuit.nodes_at(0).gate(), Gate::HalfAdder);
-    }
-
-    #[test]
-    #[should_panic(expected="one of the outputs is not in the subcircuit nets for")]
-    fn test_incomplete_adder_output() {
-        let mut circuit = Circuit::empty();
-        
-        let in_0 = circuit.add_input();
-        let in_1 = circuit.add_input();
-        let in_2 = circuit.add_input();
-
-        let ha_outputs =  circuit.add_gate(Gate::HalfAdder, vec![NetLit::positive(in_0), NetLit::positive(in_1)]);
-        let out_0 = ha_outputs[0];
-        let c = ha_outputs[1];
-
-        let out_1 = circuit.add_gate(Gate::And, vec![NetLit::positive(in_2), NetLit::positive(c)])[0];
-
-        circuit.set_output(out_0, false);
-        circuit.set_output(out_1, false);
-
-        let sub_nets = vec![out_0];
-        let sub_outputs = vec![NetLit::positive(out_0)];
-        let sub_inputs = vec![in_0, in_1];
-
-        circuit.subcircuit(&sub_nets, &sub_inputs, &sub_outputs);
-    }
 }

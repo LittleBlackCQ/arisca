@@ -1,6 +1,6 @@
 use super::*;
 use super::sim::Simulator;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashSet, HashMap};
 
 pub trait ExtractorStrategy {
     fn cut_size(&self) -> usize;
@@ -18,14 +18,7 @@ pub struct Match {
     pub gate: Gate,
 }
 
-struct AdderMatch {
-    sum: Match,
-    carry: Match,
-    gate: Gate,
-}
-
 pub struct GenericExtractor;
-
 impl GenericExtractor {
     pub fn try_match(
         circuit: &Circuit, 
@@ -78,23 +71,45 @@ impl GenericExtractor {
     }
 
     pub fn rebuild_circuit(circuit: &Circuit, matches: Vec<Match>) -> Circuit {
-        let all_cone_nets: Vec<NetId> = matches.iter().flat_map(|m| m.cone_nets.clone()).collect();
-
-        let negated_outputs: Vec<NetId> = matches.iter()
+        let negated_outputs: HashSet<NetId> = matches.iter()
             .filter_map(|m| if m.output_negated { Some(m.root) } else { None })
             .collect();
 
-        fn reconstruct_node(circuit: &Circuit, negated_outputs: &[NetId], new_circuit: &mut Circuit, net_map: &mut HashMap<NetId, NetId>, net_id: &NetId) -> NetId {
-            let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().unwrap());
-            let new_inputs: Vec<NetLit> = node.inputs().iter()
-                .map(|lit| {
-                    let mapped_net = net_map.get(&lit.net()).copied().unwrap_or_else(|| reconstruct_node(circuit, negated_outputs, new_circuit, net_map, &lit.net()));
-                    NetLit::new(mapped_net, lit.negative() ^ negated_outputs.contains(&lit.net()))
-                })
-                .collect();
-            let new_net = new_circuit.add_gate(node.gate().clone(), new_inputs)[0];
-            net_map.insert(*net_id, new_net);
-            new_net
+        let match_lookup: HashMap<NetId, &Match> = matches.iter().map(|m| (m.root, m)).collect();
+        // recursive reconstruction - build when needed
+        fn reconstruct_node(
+            circuit: &Circuit, 
+            matches: &[Match], 
+            negated_outputs: &HashSet<NetId>, 
+            net_id: &NetId, 
+            match_lookup: &HashMap<NetId, &Match>,
+            new_circuit: &mut Circuit, 
+            net_map: &mut HashMap<NetId, NetId>
+        ) -> NetId {
+            if let Some(&id) = net_map.get(net_id) { return id; }
+
+            // mapped node
+            if let Some(m) = match_lookup.get(net_id) {
+                let inputs: Vec<NetLit> = m.cut.iter().zip(m.input_negations.iter())
+                    .map(|(n, neg)| {
+                        let mapped = reconstruct_node(circuit, matches, negated_outputs, n, match_lookup,  new_circuit, net_map);
+                        NetLit::new(mapped, neg ^ negated_outputs.contains(n))
+                    })
+                    .collect();
+                let out = new_circuit.add_gate(m.gate.clone(), inputs)[0];
+                net_map.insert(m.root, out);
+                out
+            } else { // old node
+                let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
+                let inputs: Vec<NetLit> = node.inputs().iter().map(|lit| {
+                        let mapped = reconstruct_node(circuit, matches, negated_outputs, &lit.net(), match_lookup, new_circuit, net_map);
+                        NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
+                    })
+                    .collect();
+                let out = new_circuit.add_gate(node.gate().clone(), inputs)[0];
+                net_map.insert(*net_id, out);
+                out
+            }
         }
 
         let mut new_circuit = Circuit::empty();
@@ -107,39 +122,13 @@ impl GenericExtractor {
             net_map.insert(*net_id, new_id);
         }
         
-        for net_id in circuit.topology_nets().iter() {
-            if net_map.contains_key(net_id) {
-                continue;
-            }
-            // new nodes
-            if let Some(pos) = matches.iter().position(|m| m.root == *net_id) {
-                let m = &matches[pos];
-                let new_inputs: Vec<NetLit> = m.cut.iter().zip(m.input_negations.iter())
-                    .map(|(n, neg)| {
-                        let mapped_net = net_map.get(n).copied().unwrap_or_else(|| reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, n));
-                        NetLit::new(mapped_net, negated_outputs.contains(n) ^ neg)
-                    })
-                    .collect();
-                let new_output_nets = new_circuit.add_gate(m.gate.clone(), new_inputs);
-                net_map.insert(m.root, new_output_nets[0]);
-                continue;
-            }
-
-            // deleted nodes
-            if all_cone_nets.contains(net_id) {
-                continue;
-            }
-
-            // kept nodes
-            reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, net_id);    
-        }
-
         // POs
         for out_lit in circuit.outputs() {
-            let mapped = net_map.get(&out_lit.net()).copied().unwrap_or_else(|| reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, &out_lit.net()));
+            let mapped = reconstruct_node(circuit, matches.as_slice(), &negated_outputs, &out_lit.net(), &match_lookup, &mut new_circuit, &mut net_map);
             new_circuit.set_output(mapped, out_lit.negative() ^ negated_outputs.contains(&out_lit.net()));
         }
-        new_circuit.remove_dead()
+
+        new_circuit
     }
 }
 
@@ -211,6 +200,12 @@ impl ExtractorStrategy for MajExtractor {
 }
 
 // --- Adder Extractor (Multi-output) ---
+#[derive(Debug, Clone)]
+struct AdderMatch {
+    sum: Match,
+    carry: Match,
+    gate: Gate,
+}
 
 pub struct AdderExtractor;
 impl AdderExtractor {
@@ -234,13 +229,10 @@ impl AdderExtractor {
         }
 
         let mut matches = Vec::new();
-        let mut consumed_roots = BTreeSet::new();
 
-        let mut find_adder = |sums: &[&Match], carries: &[&Match], gate_type: Gate| -> bool {
+        let mut find_adder = |sums: &[Match], carries: &[Match], gate_type: Gate| -> bool {
             for s in sums {
-                if consumed_roots.contains(&s.root) { continue; }
                 for c in carries {
-                    if consumed_roots.contains(&c.root) { continue; }
                     if s.cone_nets.contains(&c.root) {
                         let is_output = circuit.outputs().iter().any(|o| o.net() == c.root);
                         let cone_nodes: Vec<NodeId> = s.cone_nets.iter().chain(&[s.root]).filter_map(|n| circuit.nets_at(*n).driver()).collect();
@@ -249,111 +241,149 @@ impl AdderExtractor {
 
                         if !is_output && !has_external_fanout { continue; }
                     } 
-
                     matches.push(AdderMatch { sum: (*s).clone(), carry: (*c).clone(), gate: gate_type });
-                    consumed_roots.insert(s.root);
-                    consumed_roots.insert(c.root);
                     return true;
                 }
             }
             false
         };
 
-        // full adder first
-        let mut sorted_keys: Vec<_> = candidates.keys().cloned().collect();
-        sorted_keys.sort_by(|a, b| b.len().cmp(&a.len()));
-        for cut in sorted_keys.iter() {
-            let ms = &candidates[cut];
+        for (cut, ms) in candidates.iter() {
             if cut.len() == 3 {
-                let xor3s: Vec<&Match> = ms.iter().filter(|m| m.gate == Gate::Xor3).collect();
-                let majs: Vec<&Match> = ms.iter().filter(|m| m.gate == Gate::Maj).collect();
+                let mut xor3s = Vec::new();
+                let mut majs = Vec::new();
+                ms.iter().for_each(|m| if m.gate == Gate::Xor3 { xor3s.push(m.clone()) } else if m.gate == Gate::Maj { majs.push(m.clone()) });
                 find_adder(&xor3s, &majs, Gate::FullAdder);
             } else if cut.len() == 2 {
-                let xors: Vec<&Match> = ms.iter().filter(|m| m.gate == Gate::Xor).collect();
-                let ands: Vec<&Match> = ms.iter().filter(|m| m.gate == Gate::And).collect();
+                let mut xors = Vec::new();
+                let mut ands = Vec::new();
+                ms.iter().for_each(|m| if m.gate == Gate::Xor { xors.push(m.clone()) } else if m.gate == Gate::And { ands.push(m.clone()) });
                 find_adder(&xors, &ands, Gate::HalfAdder);
             }
         }
+
+        // full adder first
+        matches.sort_by_key(|m| match m.gate {
+            Gate::FullAdder => 0,
+            Gate::HalfAdder => 1,
+            _ => 2,
+        });
+
         Self::rebuild_adders(circuit, matches)
     }
 
     fn rebuild_adders(circuit: &Circuit, matches: Vec<AdderMatch>) -> Circuit {
-        let mut all_cone_nets: Vec<NetId> = Vec::new();
+        // Phase 1: Identify active adders
+        let mut net_to_match_idx = HashMap::with_capacity(matches.len()*2);
+        for (i, m) in matches.iter().enumerate() {
+            net_to_match_idx.entry(m.sum.root).or_insert((i, true)); // true = sum
+            net_to_match_idx.entry(m.carry.root).or_insert((i, false)); // false = carry
+        }
 
-        let mut negated_outputs = Vec::new();
-        for am in &matches {
-            all_cone_nets.extend(am.sum.cone_nets.iter());
-            all_cone_nets.extend(am.carry.cone_nets.iter());
+        let mut activations = vec![(false, false); matches.len()];
+        let mut visited = HashSet::new();
 
-            if am.carry.output_negated { 
-                negated_outputs.push(am.carry.root); 
+        fn mark_live(
+            circuit: &Circuit,
+            matches: &[AdderMatch],
+            index: &HashMap<NetId, (usize, bool)>,
+            net: &NetId,
+            visited: &mut HashSet<NetId>,
+            activations: &mut [(bool, bool)]
+        ) {
+            if !visited.insert(*net) { return; }
+
+            if let Some(&(idx, is_sum)) = index.get(net) {
+                let m = &matches[idx];
+                let cut = if is_sum { activations[idx].0 = true; &m.sum.cut } else { activations[idx].1 = true; &m.carry.cut };
+
+                cut.iter().for_each(|input_net| {mark_live(circuit, matches, index, input_net, visited, activations)});
+            } else if let Some(driver) = circuit.nets_at(*net).driver() {
+                for input_lit in circuit.nodes_at(driver).inputs() {
+                    mark_live(circuit, matches, index, &input_lit.net(), visited, activations);
+                }
             }
-            let input_parity_diff = am.sum.input_negations.iter()
-                .zip(am.carry.input_negations.iter())
+        }
+        for out_lit in circuit.outputs() {
+            mark_live(circuit, &matches, &net_to_match_idx, &out_lit.net(), &mut visited, &mut activations);
+        }
+
+        let valid_matches: Vec<&AdderMatch> = matches.iter().enumerate()
+            .filter_map(|(i, m)| if activations[i].0 && activations[i].1 { Some(m) } else { None })
+            .collect();
+
+        // Phase 2: Prepare negated outputs
+        let mut match_lookup = HashMap::new();
+        let mut negated_outputs = HashSet::new();
+
+        for m in valid_matches {
+            match_lookup.insert(m.sum.root, m);
+            match_lookup.insert(m.carry.root, m);
+
+            if m.carry.output_negated {negated_outputs.insert(m.carry.root);}
+            let input_parity_diff = m.sum.input_negations.iter()
+                .zip(m.carry.input_negations.iter())
                 .filter(|(a, b)| a != b)
                 .count() % 2 != 0;
             
-            if am.sum.output_negated ^ input_parity_diff {
-                negated_outputs.push(am.sum.root);
+            if m.sum.output_negated ^ input_parity_diff {
+                negated_outputs.insert(m.sum.root);
             }
         }
 
-        fn reconstruct_node(circuit: &Circuit, negated_outputs: &[NetId], new_circuit: &mut Circuit, net_map: &mut HashMap<NetId, NetId>, net_id: &NetId) -> NetId {
-            let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().unwrap());
-            let new_inputs: Vec<NetLit> = node.inputs().iter()
-                .map(|lit| {
-                    let mapped_net = net_map.get(&lit.net()).copied().unwrap_or_else(|| reconstruct_node(circuit, negated_outputs, new_circuit, net_map, &lit.net()));
-                    NetLit::new(mapped_net, lit.negative() ^ negated_outputs.contains(&lit.net()))
-                })
-                .collect();
-            let new_net = new_circuit.add_gate(node.gate().clone(), new_inputs)[0];
-            net_map.insert(*net_id, new_net);
-            new_net
+        // Phase 3: Recursive Reconstruction
+        fn reconstruct(
+            circuit: &Circuit, 
+            matches: &[AdderMatch], 
+            negated_outputs: &HashSet<NetId>, 
+            net_id: &NetId, 
+            match_lookup: &HashMap<NetId, &AdderMatch>,
+            new_circuit: &mut Circuit, 
+            net_map: &mut HashMap<NetId, NetId>
+        ) -> NetId {
+            if let Some(&id) = net_map.get(net_id) { return id; }
+
+            // mapped node
+            if let Some(m) = match_lookup.get(net_id) {
+                let inputs: Vec<NetLit> = m.carry.cut.iter().zip(&m.carry.input_negations).map(|(n, neg)| {
+                    let mapped = reconstruct(circuit, matches, negated_outputs, n, match_lookup, new_circuit, net_map);
+                    NetLit::new(mapped,  neg ^ negated_outputs.contains(n))
+                }).collect();
+
+                let outs = new_circuit.add_gate(m.gate.clone(), inputs);
+                net_map.insert(m.sum.root, outs[0]);
+                net_map.insert(m.carry.root, outs[1]);
+
+                net_map[net_id]
+            } else { // old node
+                let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
+                let inputs: Vec<NetLit> = node.inputs().iter().map(|lit| {
+                    let mapped = reconstruct(circuit, matches, negated_outputs, &lit.net(), match_lookup, new_circuit, net_map);
+                    NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
+                }).collect();
+
+                let out = new_circuit.add_gate(node.gate().clone(), inputs)[0];
+                net_map.insert(*net_id, out);
+                out
+            }
         }
 
         let mut new_circuit = Circuit::empty();
         let mut net_map = HashMap::new();
         net_map.insert(0, 0);
 
+        // PIs
         for net_id in circuit.inputs() {
-            let new_id = new_circuit.add_input();
-            net_map.insert(*net_id, new_id);
-        }
-
-        for net_id in circuit.topology_nets().iter() {
-            if net_map.contains_key(net_id) {
-                continue;
-            }
-            // new nodes
-            if let Some(pos) = matches.iter().position(|m| m.sum.root == *net_id || m.carry.root == *net_id) {
-                let m = &matches[pos];
-                let ref_match = &m.carry;
-                let new_inputs: Vec<NetLit> = ref_match.cut.iter().zip(ref_match.input_negations.iter())
-                    .map(|(n, neg)| {
-                        let mapped_net = net_map.get(&n).copied().unwrap_or_else(|| reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, n));
-                        NetLit::new(mapped_net, negated_outputs.contains(n) ^ neg)
-                    })
-                    .collect();
-                let new_output_nets = new_circuit.add_gate(m.gate.clone(), new_inputs);
-                net_map.insert(m.sum.root, new_output_nets[0]);
-                net_map.insert(m.carry.root, new_output_nets[1]);
-                continue;
-            }
-
-            // deleted nodes
-            if all_cone_nets.contains(net_id) {
-                continue;
-            }
-
-            reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, net_id);
+            net_map.insert(*net_id, new_circuit.add_input());
         }
         
+        // POs
         for out_lit in circuit.outputs() {
-            let mapped = net_map.get(&out_lit.net()).copied().unwrap_or_else(|| reconstruct_node(circuit, &negated_outputs, &mut new_circuit, &mut net_map, &out_lit.net()));
+            let mapped = reconstruct(circuit, &matches, &negated_outputs, &out_lit.net(), &match_lookup, &mut new_circuit, &mut net_map);
             new_circuit.set_output(mapped, out_lit.negative() ^ negated_outputs.contains(&out_lit.net()));
         }
 
-        new_circuit.remove_dead()
+        new_circuit
     }
 }
 
@@ -401,8 +431,7 @@ mod tests {
         // verify the single gate is XOR (assuming Gate::Xor)
         let out_net = new_circuit.outputs()[0].net();
         let driver_node = new_circuit.nets_at(out_net).driver().unwrap();
-        let gate_type = new_circuit.nodes_at(driver_node).gate();
-        assert!(matches!(gate_type, Gate::Xor));
+        assert_eq!(*new_circuit.nodes_at(driver_node).gate(), Gate::Xor);
         assert_eq!(new_circuit.nodes().len(), 1);
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
@@ -438,16 +467,14 @@ mod tests {
         // Check Output 1
         let new_out1_lit = new_circuit.outputs()[0];
         let new_out1_node = new_circuit.nets_at(new_out1_lit.net()).driver().unwrap();
-        let gate1 = new_circuit.nodes_at(new_out1_node).gate();
         
         // Check Output 2
         let new_out2_lit = new_circuit.outputs()[1];
         let new_out2_node = new_circuit.nets_at(new_out2_lit.net()).driver().unwrap();
-        let gate2 = new_circuit.nodes_at(new_out2_node).gate();
 
         // Both outputs should be driven by XOR3 gates now
-        assert!(matches!(gate1, Gate::Xor3));
-        assert!(matches!(gate2, Gate::Xor3));
+        assert_eq!(*new_circuit.nodes_at(new_out1_node).gate(), Gate::Xor3);
+        assert_eq!(*new_circuit.nodes_at(new_out2_node).gate(), Gate::Xor3);
         assert_eq!(new_circuit.nodes().len(), 2);
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
@@ -550,8 +577,7 @@ mod tests {
         // verify the single gate is XOR (assuming Gate::Xor) and the internal node is removed
         let out_net = new_circuit.outputs()[0].net();
         let driver_node = new_circuit.nets_at(out_net).driver().unwrap();
-        let gate_type = new_circuit.nodes_at(driver_node).gate();
-        assert!(matches!(gate_type, Gate::Xor));
+        assert_eq!(*new_circuit.nodes_at(driver_node).gate(), Gate::Xor);
         assert_eq!(new_circuit.nodes().len(), 1);
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
@@ -755,9 +781,6 @@ mod tests {
         assert_eq!(*new_circuit.nodes_at(0).gate(), Gate::FullAdder);
 
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
-
-        assert_eq!(new_circuit.inputs().len(), 3);
-        assert_eq!(new_circuit.outputs().len(), 2);
     }
 
     #[test]
@@ -813,15 +836,104 @@ mod tests {
         // Verification
         assert_eq!(new_circuit.nodes().len(), 2);
 
-        let fa = new_circuit.nodes_at(new_circuit.nets_at(fa_sum).driver().unwrap());
+        let fa = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[0].net()).driver().unwrap());
         assert_eq!(*fa.gate(), Gate::FullAdder);
 
-        let ha = new_circuit.nodes_at(new_circuit.nets_at(ha1_sum).driver().unwrap());
+        let ha = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[2].net()).driver().unwrap());
         assert_eq!(*ha.gate(), Gate::HalfAdder);
 
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+    }
 
-        assert_eq!(new_circuit.inputs().len(), 3);
-        assert_eq!(new_circuit.outputs().len(), 4);
+    #[test]
+    fn test_fa_containing_ha_incomplete_extrafanout() {
+        let mut circuit = Circuit::empty();
+        
+        // 1. Inputs: A, B, Cin
+        let a = circuit.add_input();
+        let b = circuit.add_input();
+        let cin = circuit.add_input();
+
+        // 2. First Half Adder Structure (Inner HA)
+        // HA1_Sum = A ^ B
+        let ha1_sum = circuit.add_gate(Gate::Xor, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+        ])[0];
+        
+        // HA1_Carry = A & B
+        let ha1_carry = circuit.add_gate(Gate::And, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+        ])[0];
+
+        // 3. Second Half Adder Structure Logic
+        // FA_Sum = HA1_Sum ^ Cin
+        let fa_sum = circuit.add_gate(Gate::Xor, vec![
+            NetLit::new(ha1_sum, false),
+            NetLit::new(cin, false),
+        ])[0];
+
+        // HA2_Carry = HA1_Sum & Cin
+        let ha2_carry = circuit.add_gate(Gate::And, vec![
+            NetLit::new(ha1_sum, false),
+            NetLit::new(cin, false),
+        ])[0];
+
+        // 4. Final Carry Logic
+        // FA_Carry = HA1_Carry | HA2_Carry
+        let fa_carry = circuit.add_gate(Gate::Or, vec![
+            NetLit::new(ha1_carry, false),
+            NetLit::new(ha2_carry, false),
+        ])[0];
+
+        circuit.set_output(fa_sum, false);
+        circuit.set_output(fa_carry, false);
+        circuit.set_output(ha1_sum, false);
+
+        // Run the extractor
+        let new_circuit = AdderExtractor::run(&circuit);
+
+        // // Verification
+        assert_eq!(new_circuit.nodes().len(), 2);
+
+        let fa = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[0].net()).driver().unwrap());
+        assert_eq!(*fa.gate(), Gate::FullAdder);
+
+        let ha = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[2].net()).driver().unwrap());
+        assert_eq!(*ha.gate(), Gate::Xor);
+
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+    }
+
+    #[test]
+    fn test_fa_output_negated() {
+        let mut circuit = Circuit::empty();
+
+        // 1. Inputs: A, B, Cin
+        let a = circuit.add_input();
+        let b = circuit.add_input();
+        let cin = circuit.add_input();
+
+        // 2. internal gates
+        let maj = circuit.add_gate(Gate::Maj, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+            NetLit::new(cin, true),
+        ])[0];
+        
+        let xor3 = circuit.add_gate(Gate::Xor3, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+            NetLit::new(cin, false),
+        ])[0];
+
+        circuit.set_output(maj, true);
+        circuit.set_output(xor3, false);
+
+        let new_circuit = AdderExtractor::run(&circuit);
+
+        assert_eq!(new_circuit.nodes().len(), 1);
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 }

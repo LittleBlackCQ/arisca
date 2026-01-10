@@ -58,7 +58,7 @@ impl CutEnumerator {
         let net_num = circuit.nets().len();
         let mut cuts: Vec<Vec<Cut>> = vec![Vec::new(); net_num];
 
-        for &net in circuit.topology_nets().iter() {
+        for net in 0..circuit.nets().len() {
             if circuit.inputs().contains(&net) {
                 // PI
                 cuts[net].push(Self::singleton_cut(net));

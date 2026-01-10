@@ -59,7 +59,7 @@ impl GenericExtractor {
         let cut_db = circuit.get_cuts(strategy.cut_size(), 20);
         let mut matches = Vec::new();
 
-        for root in circuit.topology_nets() {
+        for root in 0..circuit.nets().len() {
             for cut in cut_db[root].iter() {
                 if let Some(m) = Self::try_match(circuit, root, cut, &strategy, &mut sim) {
                     matches.push(m);
@@ -218,7 +218,7 @@ impl AdderExtractor {
             &Xor3Extractor, &MajExtractor, &XorExtractor, &AndExtractor
         ];
 
-        for &root in circuit.topology_nets().iter() {
+        for root in 0..circuit.nets().len() {
             for cut in &cut_db[root] {
                 for strategy in strategies {
                     if let Some(m) = GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim) {
@@ -351,8 +351,8 @@ impl AdderExtractor {
                 }).collect();
 
                 let outs = new_circuit.add_gate(m.gate.clone(), inputs);
-                net_map.insert(m.sum.root, outs[0]);
-                net_map.insert(m.carry.root, outs[1]);
+                net_map.insert(m.carry.root, outs[0]);
+                net_map.insert(m.sum.root, outs[1]);
 
                 net_map[net_id]
             } else { // old node

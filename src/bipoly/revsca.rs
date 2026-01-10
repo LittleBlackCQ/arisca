@@ -49,7 +49,7 @@ impl RevscaStrategy {
                     
                     if !factor.is_zero() {
                         root_poly -= gate_poly * factor;
-                    } else { continue; }
+                    }
                 }
             }
             debug!("Terms after reducing: {:?}", root_poly.terms().len());

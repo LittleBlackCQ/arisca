@@ -52,7 +52,8 @@ impl<'a> Simulator<'a> {
 
     fn run_full(&mut self, inputs: &[bool]) -> Vec<bool> {
         // Run simulation updating all nets in topological order
-        self.compute(self.circuit.inputs(), inputs, &self.circuit.topology_nets(), &[]);
+        let internal_nets: Vec<_> = (0..self.circuit.nets().len()).collect();
+        self.compute(self.circuit.inputs(), inputs, &internal_nets, &[]);
 
         // Extract final circuit outputs handling literal negation
         self.circuit.outputs().iter()

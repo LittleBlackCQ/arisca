@@ -58,7 +58,7 @@ impl Circuit {
         let mut net_levels = vec![0; self.nets.len()];
         let mut node_levels = vec![0; self.nodes.len()];
 
-        for &net_id in self.topology_nets().iter() {
+        for net_id in 0..self.nets().len() {
             if let Some(driver_id) = self.nets_at(net_id).driver() {
                 net_levels[net_id] = node_levels[driver_id];
             } else {
@@ -133,6 +133,20 @@ impl Circuit {
             }
             if !same_rank_nodes.is_empty() {
                 dot.push_str(&format!("    {{ rank=same; {}; }}\n", same_rank_nodes.join("; ")));
+            }
+        }
+
+
+        let mut po_nodes = Vec::new();
+        for i in 0..self.outputs().len() {
+            po_nodes.push(format!("out_{}", i));
+        }
+        
+        if !po_nodes.is_empty() {
+            dot.push_str(&format!("    {{ rank=same; {}; }}\n", po_nodes.join("; ")));
+
+            for pair in po_nodes.windows(2) {
+                dot.push_str(&format!("    {} -> {} [style=invis];\n", pair[0], pair[1]));
             }
         }
 

@@ -140,10 +140,7 @@ impl Polynomial {
         
         for m in self.terms.iter_mut() {
             let c = m.coeff(); // &BigInt
-            // Euclidean modulo for BigInt: ((c % n) + n) % n
-            let r = ((c % &n) + &n) % &n;
-            // Assuming we need to replace the monomial or update coefficient
-            // Since Monomial::new takes ownership, and we are mutating in place:
+            let r = c % &n;
             *m = Monomial::new(m.term(), r);
         }
 
@@ -160,8 +157,7 @@ pub struct AlgebraicCircuit<'a> {
 
 impl<'a> AlgebraicCircuit<'a> { 
     pub fn new(circuit: &'a Circuit) -> Self {
-        let mut net_to_var = vec![0; circuit.nets().len()];
-        circuit.topology_nets().iter().enumerate().for_each(|(i, &v)| net_to_var[v] = i as VarId);
+        let net_to_var = (0..circuit.nets().len() as u32).collect();
         Self {
             inner: circuit,
             net_to_var
@@ -216,21 +212,21 @@ impl PolyVerifier {
                     res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_quad - cubic);
                 }
                 Gate::HalfAdder => {
-                    res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
+                    res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
+                    res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
                             (Polynomial::var(inputs[0], one.clone())
                             + Polynomial::var(inputs[1], one.clone()));
-                    res[1] += Polynomial::var(outputs[1], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
                 }
                 Gate::FullAdder => {
-                    res[0] += Polynomial::var(outputs[0], one.clone()) + Polynomial::var(outputs[1], two.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
-                            + Polynomial::var(inputs[1], one.clone())
-                            + Polynomial::var(inputs[2], one.clone()));
-                    res[1] += Polynomial::var(outputs[1], one.clone()) -
+                    res[0] += Polynomial::var(outputs[0], one.clone()) -
                             (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
                             + Polynomial::term(&[inputs[0], inputs[2]], one.clone())
                             + Polynomial::term(&[inputs[1], inputs[2]], one.clone())
                             - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
+                    res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
+                            (Polynomial::var(inputs[0], one.clone())
+                            + Polynomial::var(inputs[1], one.clone())
+                            + Polynomial::var(inputs[2], one.clone()));
                 }
             }
 
@@ -267,7 +263,7 @@ impl PolyVerifier {
         let modulus = spec.modulus(&ac);
         
         debug!("Golden polynomial terms: {:?}\n{:?}", golden_poly.terms().len(), golden_poly);
-        for &net in circuit.rev_topology_nets().iter() {
+        for net in (0..circuit.nets().len()).rev() {
             if let Some(gate_poly) = poly_map.get(&net) {
                 let gate_poly = gate_poly.clone();
                 debug!("Polynomial for Net {:?}: {:?}", net, gate_poly);

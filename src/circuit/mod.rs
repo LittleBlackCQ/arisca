@@ -5,7 +5,7 @@ pub mod extractor;
 pub mod cut;
 pub mod sim;
 
-pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit};
+pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit, Cone};
 pub use crate::circuit::gate::Gate;
 
 pub struct Circuit {
@@ -59,6 +59,29 @@ impl Circuit {
             }
         }
         true
+    }
+
+    // cone
+    pub fn get_dfs_cone<F>(&self, root: NetId, is_terminal: F) -> Cone
+    where F: Fn(&NetId) -> bool { 
+        use std::collections::HashSet;
+        let (mut nets, mut nodes, mut inputs) = (Vec::new(), Vec::new(), Vec::new());
+        
+        fn dfs<F>(circuit: &Circuit, net: NetId, is_terminal: &F, nets: &mut Vec<NetId>, nodes: &mut Vec<NodeId>, inputs: &mut Vec<NetId>, visited: &mut HashSet<NetId>)
+        where F: Fn(&NetId) -> bool {
+            if visited.contains(&net) { return; }
+            visited.insert(net);
+            if is_terminal(&net) { inputs.push(net); return; }
+            if let Some(driver) = circuit.nets_at(net).driver() {
+                for input in circuit.nodes_at(driver).inputs() {
+                    dfs(circuit, input.net(), is_terminal, nets, nodes, inputs, visited);
+                }
+                nodes.push(driver);
+            }
+            nets.push(net);
+        }
+        dfs(self, root, &is_terminal, &mut nets, &mut nodes, &mut inputs, &mut HashSet::new());
+        Cone { root, inputs, nets, nodes }
     }
 
     // builder

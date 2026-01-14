@@ -64,6 +64,10 @@ impl Node {
     pub fn outputs(&self) -> &[NetId] {
         &self.outputs
     }
+
+    pub fn is_multioutput(&self) -> bool {
+        self.outputs.len() > 1
+    }
 }
 
 #[derive(Clone, Hash)]
@@ -105,4 +109,12 @@ impl Net {
     pub fn loads(&self) -> &[NodeId] {
         &self.loads
     }
+}
+
+#[derive(Clone, Hash, Debug)]
+pub struct Cone {
+    pub root: NetId,
+    pub inputs: Vec<NetId>,
+    pub nets: Vec<NetId>,
+    pub nodes: Vec<NodeId>,
 }

@@ -1,6 +1,5 @@
 use crate::circuit::*;
-use super::Polynomial;
-use super::poly::AlgebraicCircuit;
+use super::{Polynomial, AlgebraicCircuit};
 use num_bigint::BigInt;
 use num_traits::One;
 
@@ -20,7 +19,7 @@ impl CircuitSpec for MultiplierSpec {
             })
         };
 
-        let inputs = ac.inner.inputs();
+        let inputs = ac.circuit.inputs();
         let half = inputs.len() / 2;
         
         let poly_a = build_poly(
@@ -31,17 +30,17 @@ impl CircuitSpec for MultiplierSpec {
         );
         
         let mut golden = build_poly(
-            &mut ac.inner.outputs().iter().rev().map(|l| l.net())
+            &mut ac.circuit.outputs().iter().rev().map(|l| l.net())
         );
-        for output in ac.inner.outputs() {
+        for output in ac.circuit.outputs() {
             if output.negative() {
-                golden.neg_var(&(ac.var(output.net())));
+                golden.neg_var(&(&ac.var(output.net())));
             }
         }
         golden - poly_a * poly_b
     }
 
     fn modulus(&self, ac: &AlgebraicCircuit) -> Option<BigInt> {
-        Some(BigInt::from(1) << ac.inner.outputs().len())
+        Some(BigInt::from(1) << ac.circuit.outputs().len())
     }
 }

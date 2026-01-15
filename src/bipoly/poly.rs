@@ -1,13 +1,13 @@
 use super::mono::{Monomial, VarId};
 use super::spec::CircuitSpec;
-use super::strategy::Strategy;
+use super::strategy::{Strategy, ReductionAction};
 use crate::circuit::*;
 
 use num_bigint::BigInt;
 use num_traits::{Zero, One, Signed};
 use std::collections::HashMap;
 use std::time::Instant;
-use log::{info, debug, warn};
+use log::{info, debug};
 
 #[derive(Clone)]
 pub struct Polynomial {
@@ -40,16 +40,6 @@ impl Polynomial {
     pub fn mono(m: Monomial) -> Self {
         Polynomial { terms: vec![m] }
     }
-    
-    pub fn remap<F>(&self, map: F) -> Self 
-    where F: Fn(VarId) -> VarId {
-        let mut res = Polynomial::zero();
-        for m in self.terms.iter() {
-            let new_vars: Vec<VarId> = m.term().iter().map(|&v| map(v)).collect();
-            res.insert(Monomial::new(&new_vars, m.coeff().clone()));
-        }
-        res
-    }
 
     pub fn divide_by_term(&self, t: &[VarId]) -> Self {
         let mut res = Polynomial::zero();
@@ -65,20 +55,22 @@ impl Polynomial {
         res
     }
 
+    pub fn remove_mono_by<F>(&mut self, f: F)
+    where F: Fn(&Monomial) -> bool {
+        self.terms.retain(|m| !f(m));
+    }
+
     pub fn is_zero(&self) -> bool {
         self.terms.is_empty()
     }
 
     pub fn terms(&self) -> &[Monomial] {
-            &self.terms
-        }
+        &self.terms
+    }
 
-    pub fn leading_term(&self) -> Option<&Monomial> {
-            if self.terms.is_empty() {
-                return None;
-            }
-            Some(&self.terms[self.terms.len()-1])
-        }
+    pub fn size(&self ) -> usize {
+        self.terms.len()
+    }
     
     fn insert(&mut self, m: Monomial) {
         let pos = self.terms.binary_search(&m);
@@ -151,33 +143,32 @@ impl Polynomial {
 
 
 pub struct AlgebraicCircuit<'a> {
-    pub inner: &'a Circuit,
+    pub circuit: &'a Circuit,
     net_to_var: Vec<VarId>
 }
 
 impl<'a> AlgebraicCircuit<'a> { 
-    pub fn new(circuit: &'a Circuit) -> Self {
-        let net_to_var = (0..circuit.nets().len() as u32).collect();
+    pub fn new(circuit: &'a Circuit, net_to_var: Vec<VarId>) -> Self {
         Self {
-            inner: circuit,
+            circuit,
             net_to_var
         }
     }
-
     pub fn var(&self, net: NetId) -> VarId {
         self.net_to_var[net]
     }
 }
+
 pub struct PolyVerifier;
 impl PolyVerifier {
-    fn init_poly_map(ac: &AlgebraicCircuit) -> HashMap<NetId, Polynomial> {
+    fn init_poly_map(ac: &AlgebraicCircuit) -> HashMap<VarId, Polynomial> {
         let mut poly_map = HashMap::new();
 
         let one = BigInt::one();
         let two = BigInt::from(2);
         let four = BigInt::from(4);
 
-        for node in ac.inner.nodes() {
+        for node in ac.circuit.nodes() {
             let inputs: Vec<VarId> = node.inputs().iter().map(|lit| ac.var(lit.net())).collect();
             let outputs: Vec<VarId> = node.outputs().iter().map(|net| ac.var(*net)).collect();
             
@@ -189,13 +180,13 @@ impl PolyVerifier {
                 }
                 Gate::Or => { 
                     res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
+                             (Polynomial::var(inputs[0], one.clone())
                             + Polynomial::var(inputs[1], one.clone())
                             - Polynomial::term(&[inputs[0], inputs[1]], one.clone()));
                 }
                 Gate::Xor => { 
                     res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
+                             (Polynomial::var(inputs[0], one.clone())
                             + Polynomial::var(inputs[1], one.clone())
                             - Polynomial::term(&[inputs[0], inputs[1]], two.clone()));
                 }
@@ -214,17 +205,17 @@ impl PolyVerifier {
                 Gate::HalfAdder => {
                     res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
                     res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
+                             (Polynomial::var(inputs[0], one.clone())
                             + Polynomial::var(inputs[1], one.clone()));
                 }
                 Gate::FullAdder => {
                     res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
+                             (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
                             + Polynomial::term(&[inputs[0], inputs[2]], one.clone())
                             + Polynomial::term(&[inputs[1], inputs[2]], one.clone())
                             - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
                     res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
+                             (Polynomial::var(inputs[0], one.clone())
                             + Polynomial::var(inputs[1], one.clone())
                             + Polynomial::var(inputs[2], one.clone()));
                 }
@@ -239,55 +230,80 @@ impl PolyVerifier {
             }
 
             for (i, &net) in node.outputs().iter().enumerate() {
-                poly_map.insert(net, res[i].clone());
+                poly_map.insert(ac.var(net), res[i].clone());
             }
         }
 
         poly_map
     }
 
-    pub fn verify<S: CircuitSpec, O: Strategy>(
+    pub fn poly_reduce<NextFn, PostFn>(
+        mut poly: Polynomial, 
+        poly_map: &HashMap<VarId, Polynomial>, 
+        mut next_var_fn: NextFn,
+        mut post_reduce_fn: PostFn
+    ) -> Polynomial
+    where 
+        NextFn: FnMut(&Polynomial) -> ReductionAction,
+        PostFn: FnMut(&mut Polynomial) 
+    {
+        loop {
+            match next_var_fn(&poly) {
+                ReductionAction::Stop => break,
+                ReductionAction::Reduce(var) => {
+                    if let Some(gate_poly) = poly_map.get(&var) {
+                        let factor = poly.divide_by_term(&[var]);
+                        if !factor.is_zero() {
+                            poly -= factor * gate_poly;
+                        }
+                        post_reduce_fn(&mut poly);
+                        debug!("Var {:?}: {:?}, size: {:?}", var, gate_poly, poly.size());
+                    }
+                }
+                ReductionAction::Replace(new_poly, _var) => {
+                    poly = new_poly;
+                }
+            }
+        }
+        poly
+    }
+
+    pub fn verify<C: CircuitSpec, S: Strategy>(
         circuit: &Circuit, 
-        spec: S, 
-        strategy: O
+        spec: C, 
+        mut strategy: S
     ) -> bool {
         let start_time = Instant::now();
 
-        let ac = AlgebraicCircuit::new(circuit);
-
+        let ac = AlgebraicCircuit::new(circuit, strategy.gen_var_map(circuit));
         let mut poly_map = Self::init_poly_map(&ac);
+        strategy.pre_reduce(&ac, &mut poly_map);
+        strategy.init_order(&ac);
 
-        strategy.apply(&ac, &mut poly_map);
-
-        let mut golden_poly = spec.build_golden(&ac);
+        let init_poly = spec.build_golden(&ac);
         let modulus = spec.modulus(&ac);
-        
-        debug!("Golden polynomial terms: {:?}\n{:?}", golden_poly.terms().len(), golden_poly);
-        for net in (0..circuit.nets().len()).rev() {
-            if let Some(gate_poly) = poly_map.get(&net) {
-                let gate_poly = gate_poly.clone();
-                debug!("Polynomial for Net {:?}: {:?}", net, gate_poly);
 
-                if let Some(mono) = gate_poly.leading_term() {
-                    if mono.degree() != 1 || !mono.coeff().is_one() {
-                        warn!("Net {:?} polynomial has non-unit leading term: {:?}", net, mono);
-                    }
-                    
-                    let factor = golden_poly.divide_by_term(mono.term());
-                    
-                    if !factor.is_zero() {
-                        golden_poly -= gate_poly * factor;
-                    } else { continue; }
-                }
+        debug!("Starting polynomial, size: {:?}\n{:?}", init_poly.size(), init_poly);
+        let result_poly = PolyVerifier::poly_reduce(
+            init_poly, 
+            &poly_map, 
+            |current_poly| {
+                strategy.next_reduction_var(current_poly, &poly_map)
+            }, 
+            |poly| {
                 if let Some(m) = &modulus {
-                    golden_poly.mod_by_const(m);
+                    poly.mod_by_const(m);
                 }
-                debug!("Terms after reducing: {:?}", golden_poly.terms().len());
-            }
-        }
+                S::post_reduce(poly);
+            });
 
-        let success = golden_poly.is_zero();
-        info!("Verification {} in {:?}", success, start_time.elapsed());
+        let success = result_poly.is_zero();
+        if success{
+            info!("Verification success in {:?}!", start_time.elapsed());
+        }
+        else {
+            info!("Verification failed! Polynomial residue: {:?}", result_poly);
+        }
         success
     }
 }

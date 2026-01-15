@@ -6,6 +6,7 @@ pub mod cut;
 pub mod sim;
 
 pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit, Cone};
+pub use crate::circuit::extractor::AdderExtractor;
 pub use crate::circuit::gate::Gate;
 
 pub struct Circuit {

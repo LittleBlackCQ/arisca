@@ -2,6 +2,8 @@ use super::*;
 use super::sim::Simulator;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use log::info;
+
 pub trait ExtractorStrategy {
     fn cut_size(&self) -> usize;
     fn target_gate(&self) -> Gate;
@@ -338,6 +340,7 @@ impl AdderExtractor {
             new_circuit.set_output(mapped, out_lit.negative() ^ negated_outputs.contains(&out_lit.net()));
         }
 
+        info!("Mapped FA = {:?} Mapped HA = {:?}", new_circuit.nodes().iter().filter(|n| { *n.gate() == Gate::FullAdder }).count(), new_circuit.nodes().iter().filter(|n| { *n.gate() == Gate::HalfAdder }).count());
         new_circuit
     }
 }

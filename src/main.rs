@@ -1,48 +1,34 @@
-use mulsca::bipoly::poly::Polynomial;
-use mulsca::bipoly::mono::{Monomial, VarId};
-use mulsca::circuit::{gate::Gate, Circuit};
 use std::fs::File;
-use env_logger::Env;
+use env_logger::{Builder, Env, Target};
+
+use mulsca::{
+    config::Config,
+    aiger::AigerParser,
+    bipoly::{RevscaStrategy, MultiplierSpec, PolyVerifier},
+    circuit::AdderExtractor,
+};
 
 fn main() {
-    let file = File::create("run.log").unwrap();
+    let cfg = Config::parse_args();
 
-    env_logger::Builder::from_env(Env::default())
-        .format_timestamp(None)
-        .format_target(false)
-        .target(env_logger::Target::Pipe(Box::new(file)))
-        .init();
+    init_logger(&cfg);
 
-    let path = "/home/likezhi/mulsca/testbench/33.aig";
-    let circuit = Circuit::from_aig(path);
-    let mut input1 = Polynomial::zero();
-    for idx in (0..(circuit.inputs().len() / 2)).rev() {
-        if let Some(input) = circuit.inputs().get(idx) {
-            let input = u32::try_from(*input).expect("net index too large");
-            input1 *= Polynomial::constant(2);
-            input1 += Polynomial::var(input, 1);
-        }
-    }
-    let mut input2 = Polynomial::zero();
-    for idx in ((circuit.inputs().len() / 2)..circuit.inputs().len()).rev() {
-        if let Some(input) = circuit.inputs().get(idx) {
-            let input = u32::try_from(*input).expect("net index too large");
-            input2 *= Polynomial::constant(2);
-            input2 += Polynomial::var(input, 1);
-        }
+    let circuit = AigerParser::from_aig(&cfg.path).expect("Failed to parse AIGER file");
+    let circuit_adder = AdderExtractor::run(&circuit);
+    PolyVerifier::verify(&circuit_adder, MultiplierSpec, RevscaStrategy::default());
+}
+
+fn init_logger(cfg: &Config) {
+    let mut builder = Builder::from_env(Env::default().default_filter_or("info"));
+    
+    builder.format_timestamp(None).format_target(false);
+
+    if let Some(log_path) = &cfg.log_file {
+        let file = File::create(log_path).expect("Unable to create log file.");
+        builder.target(Target::Pipe(Box::new(file)));
+    } else {
+        builder.target(Target::Stdout);
     }
 
-    let mut golden = Polynomial::zero();
-    for output in circuit.outputs().iter().rev() {
-        let output = u32::try_from(output.net()).expect("net index too large");
-        golden *= Polynomial::constant(2);
-        golden += Polynomial::var(output, 1);
-    }
-
-    println!("{:?}", golden);
-    golden -= input1 * input2;
-    println!("{:?}", golden);
-
-    let res = circuit.check_poly(&golden);
-    println!("{}", res);
+    builder.init();
 }

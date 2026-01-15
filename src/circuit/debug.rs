@@ -144,10 +144,6 @@ impl Circuit {
         
         if !po_nodes.is_empty() {
             dot.push_str(&format!("    {{ rank=same; {}; }}\n", po_nodes.join("; ")));
-
-            for pair in po_nodes.windows(2) {
-                dot.push_str(&format!("    {} -> {} [style=invis];\n", pair[0], pair[1]));
-            }
         }
 
         dot.push_str("}\n");

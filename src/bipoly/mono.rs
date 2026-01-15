@@ -1,7 +1,7 @@
 use num_bigint::BigInt;
 use num_traits::{Zero, One};
 
-pub type VarId = u32;
+pub type VarId = i32;
 pub type Term = Vec<VarId>;
 
 #[derive(Clone, Eq, PartialEq, Hash)]

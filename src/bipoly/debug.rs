@@ -20,7 +20,10 @@ impl fmt::Debug for Monomial {
         } 
         
         // Handle variables
-        let s: Vec<String> = vars.iter().map(|v| format!("x{}", v)).collect();
+        let s: Vec<String> = vars.iter().map(|v| {
+            if *v > 0 { format!("x{}", v) }
+            else { format!("|x{:?}|", v)}
+        }).collect();
         write!(f, "{}", s.join("*"))
     }
 }

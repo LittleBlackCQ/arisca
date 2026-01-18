@@ -2,17 +2,26 @@ use super::{VarId, Polynomial, PolyVerifier, AlgebraicCircuit};
 use super::strategy::{Strategy, ReductionAction};
 use crate::circuit::*;
 
+use num_bigint::BigInt;
+use itertools::Itertools;
 use std::collections::{HashMap, HashSet};
+use log::debug;
 
 #[derive(Default)]
 pub struct RevscaStrategy {
     cones: Vec<Cone>,
+    is_convergings : Vec<bool>,
     adj: HashMap<VarId, Vec<VarId>>,
     in_degree: HashMap<VarId, usize>,
     queue: Vec<VarId>,
+    modulus: Option<BigInt>
 }
 
 impl Strategy for RevscaStrategy {
+    fn init(&mut self, ac: &AlgebraicCircuit) {
+        self.modulus = ac.modulus.clone();
+    }
+
     fn gen_var_map(&self, circuit: &Circuit) -> Vec<VarId> {
         let mut net_to_var: Vec<i32> = (0..circuit.nets().len() as i32).collect();
         circuit.nodes().iter().filter(|&node| {
@@ -29,20 +38,14 @@ impl Strategy for RevscaStrategy {
         if self.cones.is_empty() {
             self.find_fanoutfree_cones(ac.circuit);
         }
-        for cone in self.cones.iter() {
-            if cone.nets.len() < 3 { continue; }
-            let is_converging = cone.inputs.iter().filter_map(|&net_id| {
-                if let Some(driver) = ac.circuit.nets_at(net_id).driver() {
-                    let node = ac.circuit.nodes_at(driver);
-                    if *node.gate() == Gate::HalfAdder {
-                        Some(node)
-                    } else { None }
-                } else { None }
-            }).any(|node| {
-                let outputs = node.outputs();
-                outputs.iter().all(|net_id| { cone.inputs.contains(net_id) })
-            });
-            
+        if self.is_convergings.is_empty() {
+            self.detect_converging_cones(ac);
+        }
+
+        for (cone_idx, cone) in self.cones.iter().enumerate() {
+            let is_converging = self.is_convergings[cone_idx];
+            debug!("Reduce: {:?}, is converging: {:?}", cone, is_converging);
+
             let mut var_iter = cone.nets[..cone.nets.len()-1]
                 .iter()
                 .rev()
@@ -51,17 +54,20 @@ impl Strategy for RevscaStrategy {
                 .into_iter();
 
             let root_var = ac.var(cone.root);
-            let post_reduce_fn: fn(&mut Polynomial) = if is_converging { Self::post_reduce } else { |_poly| {} } ;
             if let Some(target_poly) = poly_map.get(&root_var).cloned() {
                 let result_poly = PolyVerifier::poly_reduce(
                     target_poly,
                     poly_map,
-                    |_current_poly| {
+                    move |_current_poly| {
                         var_iter.next()
-                                .map(ReductionAction::Reduce)
-                                .unwrap_or(ReductionAction::Stop)
+                            .map(ReductionAction::Reduce)
+                            .unwrap_or(ReductionAction::Stop)
                     },
-                    post_reduce_fn
+                    |current_poly| {
+                        if is_converging {
+                            Self::post_reduce(current_poly);
+                        }
+                    }
                 );
                 poly_map.insert(root_var, result_poly);
             }
@@ -75,22 +81,29 @@ impl Strategy for RevscaStrategy {
         for outlit in ac.circuit.outputs() {
             self.in_degree.entry(ac.var(outlit.net())).or_insert(0);
         }
+        for cone in self.cones.iter() {
+            self.in_degree.entry(ac.var(cone.root)).or_insert(0);
+        }
 
         for node in ac.circuit.nodes() {
             if node.outputs().len() != 2 { continue; }
             for out in node.outputs() {
                 for inp in node.inputs() {
-                    *self.in_degree.entry(ac.var(inp.net())).or_insert(0) += 1;
-                    self.adj.entry(ac.var(*out)).or_insert(Vec::new()).push(ac.var(inp.net()));
+                    let (inp_var, out_var) = (ac.var(inp.net()), ac.var(*out));
+                    *self.in_degree.entry(inp_var).or_insert(0) += 1;
+                    self.adj.entry(out_var).or_default().push(inp_var);
                 }
             }
-            *self.in_degree.entry(ac.var(node.outputs()[0])).or_insert(0) += 1;
-            self.adj.entry(ac.var(node.outputs()[1])).or_insert(Vec::new()).push(ac.var(node.outputs()[0]));
+            let (inp_var, out_var) = (ac.var(node.outputs()[0]), ac.var(node.outputs()[1]));
+            *self.in_degree.entry(inp_var).or_insert(0) += 1;
+            self.adj.entry(out_var).or_default().push(inp_var);
         }
         for cone in self.cones.iter() {
+            let root_var = ac.var(cone.root);
             for &inp in cone.inputs.iter() {
-                *self.in_degree.entry(ac.var(inp)).or_insert(0) += 1;
-                self.adj.entry(ac.var(cone.root)).or_insert(Vec::new()).push(ac.var(inp));
+                let (inp_var, out_var) = (ac.var(inp), root_var);
+                *self.in_degree.entry(inp_var).or_insert(0) += 1;
+                self.adj.entry(out_var).or_default().push(inp_var);
             }
         }
         self.queue = self.in_degree.iter().filter_map(|(&v, &degree)| { if degree == 0 { Some(v) } else { None } }).collect();
@@ -101,6 +114,7 @@ impl Strategy for RevscaStrategy {
         current_poly: &Polynomial, 
         poly_map: &HashMap<VarId, Polynomial>
     ) -> ReductionAction { 
+        debug!("Current queue: {:?}", self.queue);
         if self.queue.is_empty() || current_poly.is_zero() {
             return ReductionAction::Stop;
         }
@@ -110,6 +124,7 @@ impl Strategy for RevscaStrategy {
         } else {
             self.lazy_suite_var(current_poly, poly_map)
         };
+        debug!("Choose Var {:?}", selection.0);
 
         self.remove_and_update_graph(selection.0);
         if let Some(poly) = selection.1 {
@@ -151,7 +166,7 @@ impl RevscaStrategy {
         }).collect();
         
         self.cones = terminals.iter().map(|&root| {
-            circuit.get_dfs_cone(root, |&net_id| {
+            circuit.get_levelized_cone(root, |&net_id| {
                 let net = circuit.nets_at(net_id);
                 if net_id != root && terminals.contains(&net_id) {
                     true
@@ -162,6 +177,93 @@ impl RevscaStrategy {
                 }
             })
         }).collect()
+    }
+
+    fn detect_converging_cones(&mut self, ac: &AlgebraicCircuit) { 
+        let root_to_cone: HashMap<_, _> = self.cones.iter()
+            .map(|c| (c.root, c))
+            .collect();
+
+        let mut updates = Vec::new();
+
+        for (cone_idx, cone) in self.cones.iter().enumerate() {
+            if cone.nodes.len() < 3 { continue; };
+
+            fn expand_recursive(
+                current_cone: &Cone,
+                ac: &AlgebraicCircuit,
+                root_to_cone: &HashMap<NetId, &Cone>,
+                acc_nets: &mut Vec<NetId>,
+                acc_nodes: &mut Vec<NodeId>,
+                acc_inputs: &mut HashSet<NetId>,
+            ) {
+                let current_input_set: HashSet<&NetId> = current_cone.inputs.iter().collect();
+
+                for &node_id in &current_cone.nodes {
+                    let node = ac.circuit.nodes_at(node_id);
+                    
+                    for input_lit in node.inputs() {
+                        let input_net = input_lit.net();
+
+                        if current_input_set.contains(&input_net) {
+                            let should_expand = root_to_cone
+                                .get(&input_net)
+                                .filter(|upstream| upstream.nodes.len() < 5);
+
+                            if let Some(upstream_cone) = should_expand {
+                                
+                                expand_recursive(
+                                    upstream_cone,
+                                    ac,
+                                    root_to_cone,
+                                    acc_nets,
+                                    acc_nodes,
+                                    acc_inputs,
+                                );
+                            } else {
+                                acc_inputs.insert(input_net);
+                            }
+                        } 
+                    }
+
+                    acc_nodes.push(node_id);
+                    acc_nets.push(node.outputs()[0]);
+                }
+            }
+            
+            let mut final_nets = Vec::new();
+            let mut final_nodes = Vec::new();
+            let mut final_inputs = HashSet::new();
+
+
+            expand_recursive(
+                cone,
+                ac,
+                &root_to_cone,
+                &mut final_nets,
+                &mut final_nodes,
+                &mut final_inputs,
+            );
+
+            let is_converging = final_inputs
+                .iter()
+                .map(|&input| ac.var(input))
+                .sorted()
+                .tuple_windows()
+                .any(|(a, b)| b < 0 && (b - a) == 1);
+
+            if is_converging {
+                updates.push((cone_idx, final_inputs, final_nets, final_nodes));
+            }
+        }
+        self.is_convergings.resize(self.cones.len(), false);
+        for (cone_idx, new_inputs, new_nets, new_nodes) in updates {
+            self.is_convergings[cone_idx] = true;
+            let cone = &mut self.cones[cone_idx];
+            cone.inputs = new_inputs.iter().copied().collect();
+            cone.nets = new_nets;
+            cone.nodes = new_nodes;
+        }
     }
 
     fn remove_and_update_graph(&mut self, target_var: VarId) {
@@ -193,7 +295,12 @@ impl RevscaStrategy {
                 |_current_poly| {
                     one_shot_iter.next().map(ReductionAction::Reduce).unwrap_or(ReductionAction::Stop)
                 },
-                Self::post_reduce
+                |current_poly| {
+                    Self::post_reduce(current_poly);
+                    if let Some(m) = &self.modulus {
+                        current_poly.mod_by_const(m);
+                    }
+                }
             );
 
             let rate = (result_poly.size() as f64 - current_size) / current_size;
@@ -204,7 +311,7 @@ impl RevscaStrategy {
             }
             match best_candidate {
                 None => best_candidate = Some((rate, selection)),
-                Some((best_rate, _)) if rate > best_rate => best_candidate = Some((rate, selection)),
+                Some((best_rate, _)) if rate < best_rate => best_candidate = Some((rate, selection)),
                 _ => {}
             }
         }

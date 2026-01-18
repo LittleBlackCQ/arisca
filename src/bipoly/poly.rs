@@ -68,7 +68,7 @@ impl Polynomial {
         &self.terms
     }
 
-    pub fn size(&self ) -> usize {
+    pub fn size(&self) -> usize {
         self.terms.len()
     }
     
@@ -144,14 +144,16 @@ impl Polynomial {
 
 pub struct AlgebraicCircuit<'a> {
     pub circuit: &'a Circuit,
-    net_to_var: Vec<VarId>
+    pub modulus: Option<BigInt>,
+    net_to_var: Vec<VarId>,
 }
 
 impl<'a> AlgebraicCircuit<'a> { 
-    pub fn new(circuit: &'a Circuit, net_to_var: Vec<VarId>) -> Self {
+    pub fn new(circuit: &'a Circuit, net_to_var: Vec<VarId>, modulus: Option<BigInt>) -> Self {
         Self {
             circuit,
-            net_to_var
+            net_to_var,
+            modulus
         }
     }
     pub fn var(&self, net: NetId) -> VarId {
@@ -275,13 +277,14 @@ impl PolyVerifier {
     ) -> bool {
         let start_time = Instant::now();
 
-        let ac = AlgebraicCircuit::new(circuit, strategy.gen_var_map(circuit));
+        let ac = AlgebraicCircuit::new(circuit, strategy.gen_var_map(circuit), spec.modulus(&circuit));
+
+        strategy.init(&ac);
         let mut poly_map = Self::init_poly_map(&ac);
         strategy.pre_reduce(&ac, &mut poly_map);
         strategy.init_order(&ac);
 
         let init_poly = spec.build_golden(&ac);
-        let modulus = spec.modulus(&ac);
 
         debug!("Starting polynomial, size: {:?}\n{:?}", init_poly.size(), init_poly);
         let result_poly = PolyVerifier::poly_reduce(
@@ -290,11 +293,11 @@ impl PolyVerifier {
             |current_poly| {
                 strategy.next_reduction_var(current_poly, &poly_map)
             }, 
-            |poly| {
-                if let Some(m) = &modulus {
-                    poly.mod_by_const(m);
+            |current_poly| {
+                S::post_reduce(current_poly);
+                if let Some(m) = &ac.modulus {
+                    current_poly.mod_by_const(m);
                 }
-                S::post_reduce(poly);
             });
 
         let success = result_poly.is_zero();

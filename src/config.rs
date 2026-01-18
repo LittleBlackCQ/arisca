@@ -7,6 +7,9 @@ pub struct Config {
     #[arg(value_name = "AIG_FILE")]
     pub path: PathBuf,
 
+    #[arg(short, long, value_name = "DOT_FILE")]
+    pub dot_file: Option<String>,
+
     #[arg(short, long, value_name = "LOG_FILE")]
     pub log_file: Option<PathBuf>,
 }

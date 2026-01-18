@@ -29,7 +29,7 @@ impl GenericExtractor {
     ) -> Option<Match> {
         if cut.len() != strategy.cut_size() { return None; }
 
-        let cone= circuit.get_dfs_cone(root, |net| cut.contains(&net));
+        let cone= circuit.get_levelized_cone(root, |net| cut.contains(&net));
 
         let tt: Vec<bool> = sim.get_partial_tt(&cone.inputs, &cone.nets, &[root]).iter().map(|r| r[0]).collect();
       

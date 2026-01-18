@@ -63,26 +63,48 @@ impl Circuit {
     }
 
     // cone
-    pub fn get_dfs_cone<F>(&self, root: NetId, is_terminal: F) -> Cone
-    where F: Fn(&NetId) -> bool { 
-        use std::collections::HashSet;
-        let (mut nets, mut nodes, mut inputs) = (Vec::new(), Vec::new(), Vec::new());
-        
-        fn dfs<F>(circuit: &Circuit, net: NetId, is_terminal: &F, nets: &mut Vec<NetId>, nodes: &mut Vec<NodeId>, inputs: &mut Vec<NetId>, visited: &mut HashSet<NetId>)
-        where F: Fn(&NetId) -> bool {
-            if visited.contains(&net) { return; }
-            visited.insert(net);
-            if is_terminal(&net) { inputs.push(net); return; }
-            if let Some(driver) = circuit.nets_at(net).driver() {
-                for input in circuit.nodes_at(driver).inputs() {
-                    dfs(circuit, input.net(), is_terminal, nets, nodes, inputs, visited);
+    pub fn get_levelized_cone<F>(&self, root: NetId, is_terminal: F) -> Cone
+    where F: Fn(&NetId) -> bool {
+        use std::collections::{HashMap, VecDeque};
+        let mut degrees = HashMap::new();
+        let mut stack = vec![root];
+        while let Some(net) = stack.pop() {
+            let count = degrees.entry(net).or_insert(0);
+            *count += 1;
+            if *count == 1 && !is_terminal(&net) {
+                if let Some(driver) = self.nets_at(net).driver() {
+                    stack.extend(self.nodes_at(driver).inputs().iter().map(|n| n.net()));
                 }
-                nodes.push(driver);
             }
-            nets.push(net);
         }
-        dfs(self, root, &is_terminal, &mut nets, &mut nodes, &mut inputs, &mut HashSet::new());
-        Cone { root, inputs, nets, nodes }
+
+        let mut cone = Cone { root, inputs: Vec::new(), nets: Vec::new(), nodes: Vec::new() };
+        let mut queue = VecDeque::from([root]);
+
+        degrees.remove(&root);
+
+        while let Some(net) = queue.pop_front() {
+            if is_terminal(&net) {
+                cone.inputs.push(net);
+                continue;
+            }
+            cone.nets.push(net);
+            if let Some(driver) = self.nets_at(net).driver() {
+                cone.nodes.push(driver);
+                for input in self.nodes_at(driver).inputs() {
+                    let input_net = input.net();
+                    if let Some(c) = degrees.get_mut(&input_net) {
+                        *c -= 1;
+                        if *c == 0 {
+                            queue.push_back(input_net);
+                        }
+                    }
+                }
+            }
+        }
+        cone.nets.reverse();
+        cone.nodes.reverse();
+        cone
     }
 
     // builder

@@ -4,6 +4,8 @@ use crate::circuit::*;
 use std::collections::HashMap;
 
 pub trait Strategy {
+    fn init(&mut self, ac: &AlgebraicCircuit);
+
     fn gen_var_map(&self, circuit: &Circuit) -> Vec<VarId>;
 
     fn pre_reduce(&mut self, ac: &AlgebraicCircuit, poly_map: &mut HashMap<VarId, Polynomial>);
@@ -25,9 +27,12 @@ pub struct DefaultStrategy {
 }
 
 impl Strategy for DefaultStrategy {
+    fn init(&mut self, _ac: &AlgebraicCircuit) {}
+
     fn gen_var_map(&self, circuit: &Circuit) -> Vec<VarId> {
         (0..circuit.nets().len() as i32).collect()
     }
+
     fn pre_reduce(&mut self, _ac: &AlgebraicCircuit, _poly_map: &mut HashMap<VarId, Polynomial>) {}
 
     fn init_order(&mut self, ac: &AlgebraicCircuit) {

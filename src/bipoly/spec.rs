@@ -5,7 +5,7 @@ use num_traits::One;
 
 pub trait CircuitSpec {
     fn build_golden(&self, ac: &AlgebraicCircuit) -> Polynomial;
-    fn modulus(&self, ac: &AlgebraicCircuit) -> Option<BigInt>;
+    fn modulus(&self, circuit: &Circuit) -> Option<BigInt>;
 }
 
 pub struct MultiplierSpec;
@@ -40,7 +40,7 @@ impl CircuitSpec for MultiplierSpec {
         golden - poly_a * poly_b
     }
 
-    fn modulus(&self, ac: &AlgebraicCircuit) -> Option<BigInt> {
-        Some(BigInt::from(1) << ac.circuit.outputs().len())
+    fn modulus(&self, circuit: &Circuit) -> Option<BigInt> {
+        Some(BigInt::from(1) << circuit.outputs().len())
     }
 }

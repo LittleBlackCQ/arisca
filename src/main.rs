@@ -15,6 +15,11 @@ fn main() {
 
     let circuit = AigerParser::from_aig(&cfg.path).expect("Failed to parse AIGER file");
     let circuit_adder = AdderExtractor::run(&circuit);
+
+    if let Some(dot_file) = &cfg.dot_file {
+        circuit_adder.to_dot(dot_file);
+    }
+
     PolyVerifier::verify(&circuit_adder, MultiplierSpec, RevscaStrategy::default());
 }
 

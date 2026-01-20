@@ -1,5 +1,6 @@
 use super::*;
 use std::fmt;
+use std::path::Path;
 use std::fs;
 
 impl fmt::Debug for NetLit { 
@@ -48,7 +49,7 @@ fn get_gate_color(g: &Gate) -> &'static str {
 }
 
 impl Circuit {
-    pub fn to_dot(&self, filename: &str) {
+    pub fn to_dot<P: AsRef<Path>>(&self, path: P){
         let mut dot = String::new();
         
         dot.push_str("digraph G {\n");
@@ -148,6 +149,6 @@ impl Circuit {
 
         dot.push_str("}\n");
 
-        fs::write(filename, dot).expect(&format!("Circuit cannot write to file {} as a dot file!", filename));
+        fs::write(path.as_ref(), dot).expect(&format!("Circuit cannot write to file {} as a dot file!", path.as_ref().display()));
     }
 }

@@ -1,7 +1,7 @@
 use std::fs::File;
 use env_logger::{Builder, Env, Target};
 
-use mulsca::{
+use arisca::{
     config::Config,
     aiger::AigerParser,
     bipoly::{RevscaStrategy, MultiplierSpec, PolyVerifier},

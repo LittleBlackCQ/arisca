@@ -78,6 +78,12 @@ impl Strategy for RevscaStrategy {
         self.adj.clear();
         self.in_degree.clear();
 
+        // let carry_to_sum: HashMap<_, _> = ac.circuit.nodes().iter().filter_map(|node| {
+        //     if node.outputs().len() == 2 {
+        //         Some((node.outputs()[0], ac.var(node.outputs()[1])))
+        //     } else { None }
+        // }).collect();
+
         for outlit in ac.circuit.outputs() {
             self.in_degree.entry(ac.var(outlit.net())).or_insert(0);
         }
@@ -87,23 +93,35 @@ impl Strategy for RevscaStrategy {
 
         for node in ac.circuit.nodes() {
             if node.outputs().len() != 2 { continue; }
-            for out in node.outputs() {
-                for inp in node.inputs() {
-                    let (inp_var, out_var) = (ac.var(inp.net()), ac.var(*out));
+
+            let node_out_vars: Vec<_> = node.outputs().iter().map(|&n| ac.var(n)).collect();
+            for inp in node.inputs() {
+                let inp_var = ac.var(inp.net());
+                for &out_var in node_out_vars.iter() {
                     *self.in_degree.entry(inp_var).or_insert(0) += 1;
                     self.adj.entry(out_var).or_default().push(inp_var);
+
+                    // if let Some(&partner_sum_var) = carry_to_sum.get(&inp.net()) {
+                    //     *self.in_degree.entry(partner_sum_var).or_insert(0) += 1;
+                    //     self.adj.entry(out_var).or_default().push(partner_sum_var);
+                    // }
                 }
             }
-            let (inp_var, out_var) = (ac.var(node.outputs()[0]), ac.var(node.outputs()[1]));
-            *self.in_degree.entry(inp_var).or_insert(0) += 1;
-            self.adj.entry(out_var).or_default().push(inp_var);
+            let (carry_var, sum_var) = (ac.var(node.outputs()[0]), ac.var(node.outputs()[1]));
+            *self.in_degree.entry(carry_var).or_insert(0) += 1;
+            self.adj.entry(sum_var).or_default().push(carry_var);
         }
         for cone in self.cones.iter() {
             let root_var = ac.var(cone.root);
             for &inp in cone.inputs.iter() {
-                let (inp_var, out_var) = (ac.var(inp), root_var);
+                let inp_var = ac.var(inp);
                 *self.in_degree.entry(inp_var).or_insert(0) += 1;
-                self.adj.entry(out_var).or_default().push(inp_var);
+                self.adj.entry(root_var).or_default().push(inp_var);
+
+                // if let Some(&partner_sum_var) = carry_to_sum.get(&inp) {
+                //      *self.in_degree.entry(partner_sum_var).or_insert(0) += 1;
+                //      self.adj.entry(root_var).or_default().push(partner_sum_var);
+                // }
             }
         }
         self.queue = self.in_degree.iter().filter_map(|(&v, &degree)| { if degree == 0 { Some(v) } else { None } }).collect();
@@ -114,10 +132,20 @@ impl Strategy for RevscaStrategy {
         current_poly: &Polynomial, 
         poly_map: &HashMap<VarId, Polynomial>
     ) -> ReductionAction { 
-        debug!("Current queue: {:?}", self.queue);
         if self.queue.is_empty() || current_poly.is_zero() {
             return ReductionAction::Stop;
         }
+        // count occurrences and sort (very important)
+        let mut occ_counts = HashMap::new();
+        for term in current_poly.terms() {
+            for var in term.term() {
+                *occ_counts.entry(var).or_insert(0) += 1;
+            }
+        }
+        self.queue.sort_by_key(|&v| {
+            occ_counts.get(&v).unwrap_or(&0);
+        });
+        debug!("Current queue: {:?}", self.queue);
 
         let selection = if self.queue.len() == 1 {
             (self.queue[0], None) 

@@ -1,5 +1,6 @@
 use std::fs::File;
 use env_logger::{Builder, Env, Target};
+use log::error;
 
 use arisca::{
     config::Config,
@@ -13,14 +14,15 @@ fn main() {
 
     init_logger(&cfg);
 
-    let circuit = AigerParser::from_aig(&cfg.path).expect("Failed to parse AIGER file");
-    let circuit_adder = AdderExtractor::run(&circuit);
-
-    if let Some(dot_file) = &cfg.dot_file {
-        circuit_adder.to_dot(dot_file);
+    match AigerParser::from_aig(&cfg.path) {
+        Ok(circuit) => {
+            let circuit_adder = AdderExtractor::run(&circuit);
+            PolyVerifier::verify(&circuit_adder, MultiplierSpec, RevscaStrategy::default());
+        },
+        Err(e) => {
+            error!("{}", e)
+        }
     }
-
-    PolyVerifier::verify(&circuit_adder, MultiplierSpec, RevscaStrategy::default());
 }
 
 fn init_logger(cfg: &Config) {

@@ -1,7 +1,6 @@
 use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use env_logger::{Builder, Env, Target};
-use log::error;
 
 use arisca::{aiger::AigerParser, circuit::AdderExtractor, circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}};
 
@@ -26,36 +25,31 @@ struct Config {
     dot_file: Option<PathBuf>,
 }
 
-fn main() {
+fn main() -> Result<(), String>{
     init_logger();
     let args = Config::parse();
     
-    match AigerParser::from_aig(&args.path) {
-        Ok(mut circuit) => {
-            if let Some(mode) = args.extract_mode {
-                match mode {
-                    ExtractMode::Adder => {
-                        circuit = AdderExtractor::run(&circuit);
-                    },
-                    ExtractMode::Xor => {
-                        circuit = GenericExtractor::run(&circuit, XorExtractor);
-                    },
-                    ExtractMode::Maj => {
-                        circuit = GenericExtractor::run(&circuit, MajExtractor)
-                    },
-                    ExtractMode::Xor3 => {
-                        circuit = GenericExtractor::run(&circuit, Xor3Extractor)
-                    }
-                }
+    let mut circuit = AigerParser::from_aig(args.path)?;
+    if let Some(mode) = args.extract_mode {
+        match mode {
+            ExtractMode::Adder => {
+                circuit = AdderExtractor::run(&circuit);
+            },
+            ExtractMode::Xor => {
+                circuit = GenericExtractor::run(&circuit, XorExtractor);
+            },
+            ExtractMode::Maj => {
+                circuit = GenericExtractor::run(&circuit, MajExtractor)
+            },
+            ExtractMode::Xor3 => {
+                circuit = GenericExtractor::run(&circuit, Xor3Extractor)
             }
-            if let Some(dot_file) = args.dot_file {
-                circuit.to_dot(dot_file, None);
-            }
-        },
-        Err(e) => {
-            error!("{}", e);
-        } 
+        }
     }
+    if let Some(dot_file) = args.dot_file {
+        circuit.to_dot(dot_file, None);
+    }
+    Ok(())
 }
 
 fn init_logger() {

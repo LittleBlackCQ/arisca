@@ -277,14 +277,14 @@ impl PolyVerifier {
     ) -> bool {
         let start_time = Instant::now();
 
-        let ac = AlgebraicCircuit::new(circuit, strategy.gen_var_map(circuit), spec.modulus(&circuit));
+        let ac = AlgebraicCircuit::new(circuit, strategy.gen_var_map(circuit), spec.modulus(circuit.outputs()));
 
         strategy.init(&ac);
         let mut poly_map = Self::init_poly_map(&ac);
         strategy.pre_reduce(&ac, &mut poly_map);
         strategy.init_order(&ac);
 
-        let init_poly = spec.build_golden(&ac);
+        let init_poly = spec.build_golden(circuit.inputs(), circuit.outputs(), &|net| ac.var(net));
 
         debug!("Starting polynomial, size: {:?}\n{:?}", init_poly.size(), init_poly);
         let result_poly = PolyVerifier::poly_reduce(

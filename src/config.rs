@@ -9,6 +9,12 @@ pub struct Config {
 
     #[arg(short, long, value_name = "LOG_FILE")]
     pub log_file: Option<PathBuf>,
+
+    #[arg(short = 's', long = "spec", value_name = "INPUT_SPEC")]
+    pub spec_str: Option<String>,
+
+    #[arg(long = "signed")]
+    pub signed: bool,
 }
 
 impl Config {

@@ -74,6 +74,7 @@ dependencies = [
  "log",
  "num-bigint",
  "num-traits",
+ "regex",
 ]
 
 [[package]]

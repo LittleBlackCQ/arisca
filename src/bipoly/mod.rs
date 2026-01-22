@@ -10,4 +10,4 @@ pub use poly::{Polynomial, PolyVerifier, AlgebraicCircuit};
 pub use mono::{Monomial, VarId, Term};
 pub use strategy::{Strategy, DefaultStrategy};
 pub use revsca::{RevscaStrategy};
-pub use spec::MultiplierSpec;
+pub use spec::ArithmeticSpec;

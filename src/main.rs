@@ -1,28 +1,23 @@
 use std::fs::File;
 use env_logger::{Builder, Env, Target};
-use log::error;
 
 use arisca::{
     config::Config,
     aiger::AigerParser,
-    bipoly::{RevscaStrategy, MultiplierSpec, PolyVerifier},
+    bipoly::{RevscaStrategy, PolyVerifier, ArithmeticSpec},
     circuit::AdderExtractor,
 };
 
-fn main() {
+fn main() -> Result<(), String> {
     let cfg = Config::parse_args();
 
     init_logger(&cfg);
 
-    match AigerParser::from_aig(&cfg.path) {
-        Ok(circuit) => {
-            let circuit_adder = AdderExtractor::run(&circuit);
-            PolyVerifier::verify(&circuit_adder, MultiplierSpec, RevscaStrategy::default());
-        },
-        Err(e) => {
-            error!("{}", e)
-        }
-    }
+    let circuit = AigerParser::from_aig(&cfg.path)?;
+    let circuit_adder = AdderExtractor::run(&circuit);
+    let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
+    PolyVerifier::verify(&circuit_adder, spec, RevscaStrategy::default());
+    Ok(())
 }
 
 fn init_logger(cfg: &Config) {

@@ -278,7 +278,8 @@ impl RevscaStrategy {
                 .map(|&input| ac.var(input))
                 .sorted()
                 .tuple_windows()
-                .any(|(a, b)| b < 0 && (b - a) == 1);
+                .filter(|&(a, b)| b < 0 && (b - a) == 1)
+                .count() * 8 > final_inputs.len() * 3; // has is more than 3/4 of the inputs
 
             if is_converging {
                 updates.push((cone_idx, final_inputs, final_nets, final_nodes));

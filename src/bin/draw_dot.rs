@@ -49,7 +49,7 @@ fn main() {
                 }
             }
             if let Some(dot_file) = args.dot_file {
-                circuit.to_dot(dot_file);
+                circuit.to_dot(dot_file, None);
             }
         },
         Err(e) => {

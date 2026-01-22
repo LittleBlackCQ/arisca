@@ -319,6 +319,31 @@ impl AdderExtractor {
                     NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
                 }).collect();
 
+                // A very common special case in adders
+                if *node.gate() == Gate::And && let Some(driver1) = new_circuit.nets_at(inputs[0].net()).driver() && let Some(driver2) = new_circuit.nets_at(inputs[1].net()).driver() && driver1 == driver2 {
+                    let node = new_circuit.nodes_at(driver1);
+                    if *new_circuit.nodes_at(driver1).gate() == Gate::HalfAdder {
+                        let (mut s_lit, mut c_lit) = (inputs[0], inputs[1]);
+                        if s_lit.net() == node.outputs()[0] {
+                            (s_lit, c_lit) = (c_lit, s_lit);
+                        }
+                        if !s_lit.negative() && !c_lit.negative() {
+                            panic!("Constant signal is not completely reduced!");
+                        } else if !s_lit.negative() && c_lit.negative() {
+                            return s_lit.net();
+                        } else if s_lit.negative() && !c_lit.negative() {
+                            return c_lit.net();
+                        } else {
+                            let hop_inputs = node.inputs().iter().map(|lit| {
+                                NetLit::new(lit.net(), !lit.negative())
+                            }).collect();
+                            let out = new_circuit.add_gate(Gate::And, hop_inputs)[0];
+                            net_map.insert(*net_id, out);
+                            return out;
+                        }
+                    }
+                }
+
                 let out = new_circuit.add_gate(node.gate().clone(), inputs)[0];
                 net_map.insert(*net_id, out);
                 out
@@ -913,6 +938,62 @@ mod tests {
         let new_circuit = AdderExtractor::run(&circuit);
 
         assert_eq!(new_circuit.nodes().len(), 2);
+        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+    }
+
+    #[test]
+    fn test_ha_outputs_converge() {
+        let mut circuit = Circuit::empty();
+        let a = circuit.add_input();
+        let b = circuit.add_input();
+        let c = circuit.add_input();
+        let d = circuit.add_input();
+
+        let sum = circuit.add_gate(Gate::Xor, vec![
+            NetLit::new(a, true),
+            NetLit::new(b, false),
+        ])[0];
+        let carry = circuit.add_gate(Gate::And, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+        ])[0];
+
+        let converge1 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(sum, true),
+            NetLit::new(carry, true),
+        ])[0];
+        let out3 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(converge1, false),
+            NetLit::new(c, false),
+        ])[0];
+
+        let converge2 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(sum, false),
+            NetLit::new(carry, false),
+        ])[0];
+        let out4 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(converge2, false),
+            NetLit::new(d, false),
+        ])[0];
+
+        let converge3 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(sum, false),
+            NetLit::new(carry, true),
+        ])[0];
+
+        // let converge4 = circuit.add_gate(Gate::And, vec![
+        //     NetLit::new(sum, true),
+        //     NetLit::new(carry, false),
+        // ])[0];
+        // This one will panic!
+
+        circuit.set_output(sum, false);
+        circuit.set_output(carry, false);
+        circuit.set_output(out3, true);
+        circuit.set_output(out4, true);
+        circuit.set_output(converge3, true);
+
+        let new_circuit = AdderExtractor::run(&circuit);
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
     }
 }

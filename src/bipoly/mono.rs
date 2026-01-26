@@ -108,15 +108,7 @@ impl Monomial {
 
 impl Ord for Monomial {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        // Short-lex order: compare length first, then lexicographical
-        let min_len = self.term.len().min(other.term.len());
-        for i in 0..min_len {
-            match self.term[i].cmp(&other.term[i]) {
-                std::cmp::Ordering::Equal => {},
-                non_eq => return non_eq,
-            }
-        }
-        self.term.len().cmp(&other.term.len())
+        self.term.cmp(&other.term)
     }
 }
 

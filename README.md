@@ -24,7 +24,7 @@ Arisca processes AIGER (.aig) files. You can execute it directly using cargo run
 ### Basic Verification
 To verify an arithmetic circuit against its specification:
 ```bash 
-cargo run --bin arisca -- <AIG_FILE> [-d <DOT_FILE> -l <LOG_FILE>]
+cargo run --release --bin arisca <AIG_FILE> [-l <LOG_FILE>]
 ```
 
 

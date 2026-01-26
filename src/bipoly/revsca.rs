@@ -14,6 +14,7 @@ pub struct RevscaStrategy {
     adj: HashMap<VarId, Vec<VarId>>,
     in_degree: HashMap<VarId, usize>,
     queue: Vec<VarId>,
+    penalty: HashMap<VarId, u32>,
     modulus: Option<BigInt>
 }
 
@@ -136,15 +137,7 @@ impl Strategy for RevscaStrategy {
             return ReductionAction::Stop;
         }
         // count occurrences and sort (very important)
-        let mut occ_counts = HashMap::new();
-        for term in current_poly.terms() {
-            for var in term.term() {
-                *occ_counts.entry(var).or_insert(0) += 1;
-            }
-        }
-        self.queue.sort_by_key(|&v| {
-            occ_counts.get(&v).unwrap_or(&0);
-        });
+        self.sort_queue_by_occ_penalty(current_poly, poly_map);
         debug!("Current queue: {:?}", self.queue);
 
         let selection = if self.queue.len() == 1 {
@@ -194,7 +187,7 @@ impl RevscaStrategy {
         }).collect();
         
         self.cones = terminals.iter().map(|&root| {
-            circuit.get_levelized_cone(root, |&net_id| {
+            circuit.get_dfs_cone(root, |&net_id| {
                 let net = circuit.nets_at(net_id);
                 if net_id != root && terminals.contains(&net_id) {
                     true
@@ -217,61 +210,25 @@ impl RevscaStrategy {
         for (cone_idx, cone) in self.cones.iter().enumerate() {
             if cone.nodes.len() < 3 { continue; };
 
-            fn expand_recursive(
-                current_cone: &Cone,
-                ac: &AlgebraicCircuit,
-                root_to_cone: &HashMap<NetId, &Cone>,
-                acc_nets: &mut Vec<NetId>,
-                acc_nodes: &mut Vec<NodeId>,
-                acc_inputs: &mut HashSet<NetId>,
-            ) {
-                let current_input_set: HashSet<&NetId> = current_cone.inputs.iter().collect();
-
-                for &node_id in &current_cone.nodes {
-                    let node = ac.circuit.nodes_at(node_id);
-                    
-                    for input_lit in node.inputs() {
-                        let input_net = input_lit.net();
-
-                        if current_input_set.contains(&input_net) {
-                            let should_expand = root_to_cone
-                                .get(&input_net)
-                                .filter(|upstream| upstream.nodes.len() < 5);
-
-                            if let Some(upstream_cone) = should_expand {
-                                
-                                expand_recursive(
-                                    upstream_cone,
-                                    ac,
-                                    root_to_cone,
-                                    acc_nets,
-                                    acc_nodes,
-                                    acc_inputs,
-                                );
-                            } else {
-                                acc_inputs.insert(input_net);
-                            }
-                        } 
-                    }
-
-                    acc_nodes.push(node_id);
-                    acc_nets.push(node.outputs()[0]);
-                }
-            }
-            
-            let mut final_nets = Vec::new();
             let mut final_nodes = Vec::new();
+            let mut final_nets = Vec::new();
             let mut final_inputs = HashSet::new();
 
+            let mut queue = vec![cone];
 
-            expand_recursive(
-                cone,
-                ac,
-                &root_to_cone,
-                &mut final_nets,
-                &mut final_nodes,
-                &mut final_inputs,
-            );
+            while let Some(curr_cone) = queue.pop() { 
+                for &input_net in curr_cone.inputs.iter() {
+                    let should_expand = root_to_cone.get(&input_net)
+                        .filter(|upstream| {
+                            upstream.nodes.len() < 5
+                        });
+                    if let Some(&upstream_cone) = should_expand {
+                        queue.push(upstream_cone);
+                    } else {
+                        final_inputs.insert(input_net);
+                    }
+                }
+            }
 
             let is_converging = final_inputs
                 .iter()
@@ -282,6 +239,23 @@ impl RevscaStrategy {
                 .count() * 8 > final_inputs.len() * 3; // has is more than 3/4 of the inputs
 
             if is_converging {
+                fn collect_ordered(net: NetId, ac: &AlgebraicCircuit, inputs: &HashSet<NetId>, acc_nets: &mut Vec<NetId>, acc_nodes: &mut Vec<NodeId>) {
+                    if inputs.contains(&net) { return; }
+                    
+                    if let Some(driver) = ac.circuit.nets_at(net).driver() {
+                        let node = ac.circuit.nodes_at(driver);
+                        
+                        let children: Vec<NetId> = node.inputs().iter().map(|l| l.net()).sorted().rev().collect();
+
+                        for child in children {
+                            collect_ordered(child, ac, inputs, acc_nets, acc_nodes);
+                        }
+
+                        acc_nodes.push(driver);
+                        acc_nets.push(net);
+                    }
+                }
+                collect_ordered(cone.root, ac, &final_inputs, &mut final_nets, &mut final_nodes);
                 updates.push((cone_idx, final_inputs, final_nets, final_nodes));
             }
         }
@@ -337,6 +311,8 @@ impl RevscaStrategy {
             let selection = (var, Some(result_poly));
             if rate < threshold {
                 return selection;
+            } else {
+                *self.penalty.entry(var).or_insert(1) *= 2;
             }
             match best_candidate {
                 None => best_candidate = Some((rate, selection)),
@@ -345,5 +321,51 @@ impl RevscaStrategy {
             }
         }
         best_candidate.map(|(_, selection)| selection).expect("Queue should not be empty")
+    }
+
+    fn sort_queue_by_occ_penalty(&mut self, current_poly: &Polynomial, poly_map: &HashMap<VarId, Polynomial>) {
+        if self.queue.is_empty() || self.queue.len() == 1 {
+            return;
+        }
+        let mut stats: Vec<(_, u32)> = self.queue.iter().map(|&v| (v, 0)).collect();
+        stats.sort_by_key(|(v, _)| *v);
+
+        let min_q = stats.first().unwrap().0;
+        let max_q = stats.last().unwrap().0;
+
+        for mono in current_poly.terms() {
+            let vars = mono.term();
+
+            if vars.is_empty() || *vars.last().unwrap() < min_q {
+                continue;
+            }
+            if vars[0] > max_q {
+                break;
+            }
+
+            let (mut i, mut j) = (0, 0);
+            while i < stats.len() && j < vars.len() {
+                let target = stats[i].0;
+                let current = vars[j];
+
+                if target == current {
+                    stats[i].1 += 1;
+                    i += 1;
+                    j += 1;
+                } else if current < target {
+                    j += 1;
+                } else {
+                    i += 1;
+                }
+            }
+        }
+
+        self.queue.sort_by_key(|v| {
+            stats.binary_search_by_key(v, |(var, _)| *var)
+                 .map(|idx| stats[idx].1)
+                 .unwrap_or(0) * 
+            *self.penalty.entry(*v).or_insert(1) *
+            poly_map.get(v).unwrap_or(&Polynomial::zero()).size() as u32
+        });
     }
 }

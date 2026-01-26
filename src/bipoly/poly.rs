@@ -259,7 +259,7 @@ impl PolyVerifier {
                             poly -= factor * gate_poly;
                         }
                         post_reduce_fn(&mut poly);
-                        debug!("Var {:?}: {:?}, size: {:?}", var, gate_poly, poly.size());
+                        debug!("Reduce var {:?}, size: {:?}", var, poly.size());
                     }
                 }
                 ReductionAction::Replace(new_poly, _var) => {

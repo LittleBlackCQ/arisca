@@ -1,36 +1,30 @@
-use std::fs::File;
-use env_logger::{Builder, Env, Target};
+use std::time::Instant;
+use log::info;
 
 use arisca::{
-    config::Config,
+    config::{Config, init_logger},
     aiger::AigerParser,
-    bipoly::{RevscaStrategy, PolyVerifier, ArithmeticSpec},
+    verifier::{verify, ReductionStats},
     circuit::AdderExtractor,
 };
 
 fn main() -> Result<(), String> {
     let cfg = Config::parse_args();
+    init_logger(cfg.log_file.as_ref());
 
-    init_logger(&cfg);
+    let mut stats = ReductionStats::default();
 
-    let circuit = AigerParser::from_aig(&cfg.path)?;
-    let circuit_adder = AdderExtractor::run(&circuit);
-    let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
-    PolyVerifier::verify(&circuit_adder, spec, RevscaStrategy::default());
-    Ok(())
-}
+    let circuit_adder = AdderExtractor::run(&AigerParser::from_aig(&cfg.path)?);
+    info!("Verifying circuit file {:?}", cfg.path);
 
-fn init_logger(cfg: &Config) {
-    let mut builder = Builder::from_env(Env::default().default_filter_or("info"));
-    
-    builder.format_timestamp(None).format_target(false);
+    let start_time = Instant::now();
 
-    if let Some(log_path) = &cfg.log_file {
-        let file = File::create(log_path).expect("Unable to create log file.");
-        builder.target(Target::Pipe(Box::new(file)));
+    let result_poly = verify(&circuit_adder, &cfg, &mut stats)?;
+    if result_poly.is_zero() {
+        info!("Verification successful in {:?}", start_time.elapsed());
     } else {
-        builder.target(Target::Stdout);
+        info!("Verification failed, residue polynomial: {:?}.", result_poly)
     }
-
-    builder.init();
+    info!("{:?}", stats);
+    Ok(())
 }

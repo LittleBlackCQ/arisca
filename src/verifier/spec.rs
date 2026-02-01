@@ -1,28 +1,10 @@
-use crate::circuit::*;
-use super::VarId;
-use super::Polynomial;
+use crate::circuit::{NetId, NetLit};
+use crate::bipoly::{Polynomial, VarId};
 
 use std::str::FromStr;
 use num_bigint::BigInt;
 use regex::Regex;
 use log::warn;
-
-pub trait CircuitSpec {
-    fn build_golden(&self, inputs: &[NetId], outputs: &[NetLit], var: &impl Fn(NetId) -> VarId) -> Polynomial;
-    fn modulus(&self, outputs: &[NetLit]) -> Option<BigInt>;
-    fn bits_to_poly_signed(vars: &[VarId], is_signed: bool) -> Polynomial {
-        if let Some((&msb, rest)) = vars.split_last() {
-            let weight = if is_signed { -1 } else { 1 };
-            let init = Polynomial::var(msb, BigInt::from(weight));
-
-            rest.iter().rev().fold(init, |acc, &var| {
-                acc * Polynomial::constant(BigInt::from(2)) + Polynomial::var(var, BigInt::from(1))
-            })
-        } else {
-            Polynomial::zero()
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 enum SpecExpr {
@@ -39,6 +21,19 @@ pub struct ArithmeticSpec {
 }
 
 impl ArithmeticSpec {
+    fn bits_to_poly_signed(vars: &[VarId], is_signed: bool) -> Polynomial {
+        if let Some((&msb, rest)) = vars.split_last() {
+            let weight = if is_signed { -1 } else { 1 };
+            let init = Polynomial::var(msb, BigInt::from(weight));
+
+            rest.iter().rev().fold(init, |acc, &var| {
+                acc * Polynomial::constant(BigInt::from(2)) + Polynomial::var(var, BigInt::from(1))
+            })
+        } else {
+            Polynomial::zero()
+        }
+    }
+
     fn parse_recursive(
         tokens: &[&str],
         min_prec: u8,
@@ -93,13 +88,13 @@ impl ArithmeticSpec {
         Ok(lhs)
     }
 
-    fn eval_ast(&self, inputs: &[NetId], node: &SpecExpr, var: &impl Fn(NetId) -> VarId) -> Polynomial {
+    fn eval_ast(&self, inputs: &[NetId], node: &SpecExpr, var: &[VarId]) -> Polynomial {
         match node {
             SpecExpr::Const(v) => Polynomial::constant(v.clone()),
             SpecExpr::Var { width, offset } => {
                 let vars: Vec<VarId> = inputs[*offset .. offset + width]
                     .iter()
-                    .map(|&net| var(net))
+                    .map(|&net| var[net])
                     .collect();
                 Self::bits_to_poly_signed(&vars, self.is_signed)
             }
@@ -159,24 +154,22 @@ impl ArithmeticSpec {
             }
         }
     }
-}
 
-impl CircuitSpec for ArithmeticSpec {
-    fn build_golden(&self, inputs: &[NetId], outputs: &[NetLit], var: &impl Fn(NetId) -> VarId) -> Polynomial {
+    pub fn build_golden(&self, inputs: &[NetId], outputs: &[NetLit], vars: &[VarId]) -> Polynomial {
         let expected_poly = if let Some(root) = &self.root {
             // --- Mode 1: Explicit (AST) ---
             if inputs.len() != self.total_width {
                 warn!("Input mismatch: Spec expects {} bits, Circuit has {}", self.total_width, inputs.len());
             }
-            self.eval_ast(inputs, root, var)
+            self.eval_ast(inputs, root, vars)
         } else {
             // --- Mode 2: Default (Auto Multiplier) ---
             let half = inputs.len() / 2;
             let a_nets = &inputs[..half];
             let b_nets = &inputs[half..];
 
-            let a_vars: Vec<VarId> = a_nets.iter().map(|&n| var(n)).collect();
-            let b_vars: Vec<VarId> = b_nets.iter().map(|&n| var(n)).collect();
+            let a_vars: Vec<VarId> = a_nets.iter().map(|&n| vars[n]).collect();
+            let b_vars: Vec<VarId> = b_nets.iter().map(|&n| vars[n]).collect();
 
             let poly_a = Self::bits_to_poly_signed(&a_vars, self.is_signed);
             let poly_b = Self::bits_to_poly_signed(&b_vars, self.is_signed);
@@ -185,19 +178,23 @@ impl CircuitSpec for ArithmeticSpec {
         };
 
         // Output processing (Applied to both modes)
-        let out_vars: Vec<VarId> = outputs.iter().map(|o| var(o.net())).collect();
+        let out_vars: Vec<VarId> = outputs.iter().map(|o| vars[o.net()]).collect();
         let mut actual_poly = Self::bits_to_poly_signed(&out_vars, self.is_signed);
 
         for out in outputs {
             if out.negative() {
-                actual_poly.neg_var(&var(out.net()));
+                actual_poly.neg_var(&vars[out.net()]);
             }
         }
 
         actual_poly - expected_poly
     }
 
-    fn modulus(&self, outputs: &[NetLit]) -> Option<BigInt> {
-        Some(BigInt::from(1) << outputs.len())
+    pub fn modulus(&self, outputs: &[NetLit]) -> Option<BigInt> {
+        if let Some(root) = &self.root && matches!(root, SpecExpr::Const(_)) {
+            None
+        } else {
+            Some(BigInt::from(1) << outputs.len())
+        }
     }
 }

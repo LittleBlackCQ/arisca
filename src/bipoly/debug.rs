@@ -1,6 +1,5 @@
 use super::*;
 
-use num_traits::{One, Signed};
 use std::fmt;
 
 impl fmt::Debug for Monomial {
@@ -14,8 +13,8 @@ impl fmt::Debug for Monomial {
         }
 
         // Handle coefficient magnitude
-        let abs_coeff = coeff.abs();
-        if !abs_coeff.is_one() || vars.is_empty() {
+        let abs_coeff = coeff.clone().abs();
+        if !(abs_coeff == 1) || vars.is_empty() {
             write!(f, "{}", abs_coeff)?;
         } 
         

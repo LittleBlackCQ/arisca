@@ -1,37 +1,32 @@
-use num_bigint::BigInt;
-use num_traits::{Zero, One};
+use rug::Integer;
 
 pub type VarId = i32;
 pub type Term = Vec<VarId>;
 
-#[derive(Clone, Eq, PartialEq, Hash)]
+#[derive(Clone, Hash)]
 pub struct Monomial {
-    coeff: BigInt,
-    term: Term,
+    pub coeff: Integer,
+    pub term: Term,
 }
 
 impl Monomial {
-    pub fn new(vars: &[VarId], coeff: BigInt) -> Self {
+    pub fn new(vars: &[VarId], coeff: Integer) -> Self {
         let mut term = vars.to_vec();
         term.sort_unstable();
         term.dedup();
         Monomial { coeff, term }
     }
 
-    pub fn constant(coeff: BigInt) -> Self {
+    pub fn constant(coeff: Integer) -> Self {
         assert!(!coeff.is_zero());
         Monomial::new(&[], coeff)
     }
 
     pub fn vars(v: &[VarId]) -> Self {
-        Monomial::new(v, BigInt::one())
+        Monomial::new(v, Integer::from(1))
     }
 
-    pub fn neg(&self) -> Self {
-        Self::new(&self.term, -&self.coeff)
-    }
-
-    pub fn coeff(&self) -> &BigInt {
+    pub fn coeff(&self) -> &Integer {
         &self.coeff
     }
 
@@ -39,7 +34,7 @@ impl Monomial {
         &self.term
     }
 
-    pub fn degree(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.term.len()
     }
 
@@ -48,12 +43,12 @@ impl Monomial {
     }
 
     // Accept reference to avoid moving/cloning rhs
-    pub fn add_coeff(&mut self, rhs: &BigInt) {
+    pub fn add_coeff(&mut self, rhs: &Integer) {
         self.coeff += rhs;
     }
 
     pub fn neg_coeff(&mut self) {
-        self.coeff = -&self.coeff;
+        self.coeff = Integer::from(-&self.coeff);
     }
 
     pub fn remove_var(&mut self, v: &VarId) -> bool {
@@ -65,46 +60,50 @@ impl Monomial {
         }
     }
 
-    pub fn mul_assign(&mut self, rhs: &Monomial) {
-        self.coeff *= &rhs.coeff;
+    pub fn mul(&self, rhs: &Monomial) -> Self {
+        let new_coeff = Integer::from(&self.coeff * &rhs.coeff);
 
         let va = &self.term;
         let vb = &rhs.term;
+        let mut new_term = Vec::with_capacity(va.len() + vb.len());
 
-        // Merge sorted terms (linear scan)
-        let mut res = Vec::with_capacity(va.len() + vb.len());
         let mut pi = 0;
         let mut qi = 0;
 
         while pi < va.len() && qi < vb.len() {
             if va[pi] < vb[qi] {
-                res.push(va[pi]);
+                new_term.push(va[pi].clone());
                 pi += 1;
             } else if va[pi] > vb[qi] {
-                res.push(vb[qi]);
+                new_term.push(vb[qi].clone());
                 qi += 1;
             } else {
-                res.push(va[pi]);
+                new_term.push(va[pi].clone());
                 pi += 1;
                 qi += 1;
             }
         }
 
         if pi < va.len() {
-            res.extend_from_slice(&va[pi..]);
+            new_term.extend_from_slice(&va[pi..]);
         } else {
-            res.extend_from_slice(&vb[qi..]);
+            new_term.extend_from_slice(&vb[qi..]);
         }
 
-        self.term = res;
-    }
-
-    pub fn mul(&self, rhs: &Monomial) -> Monomial {
-        let mut res = self.clone();
-        res.mul_assign(rhs);
-        res
+        Monomial {
+            coeff: new_coeff,
+            term: new_term,
+        }
     }
 }
+
+impl PartialEq for Monomial {
+    fn eq(&self, other: &Self) -> bool {
+        self.term == other.term
+    }
+}
+
+impl Eq for Monomial {}
 
 impl Ord for Monomial {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {

@@ -17,12 +17,12 @@ use crate::config::Config;
 
 use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
-use num_bigint::BigInt;
+use rug::Integer;
 
 pub struct ReductionContext<'a> {
     pub circuit: &'a Circuit,
     pub vars: &'a [VarId],
-    pub modulus: Option<&'a BigInt>,
+    pub modulus: Option<&'a Integer>,
     pub poly_map: &'a HashMap<VarId, Polynomial>,
 }
 
@@ -47,9 +47,9 @@ fn init_vars(circuit: &Circuit) -> Vec<VarId> {
 fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial> {
     let mut poly_map = HashMap::new();
 
-    let one = BigInt::from(1);
-    let two = BigInt::from(2);
-    let four = BigInt::from(4);
+    let one = Integer::from(1);
+    let two = Integer::from(2);
+    let four = Integer::from(4);
 
     for node in circuit.nodes() {
         let inputs: Vec<VarId> = node.inputs().iter().map(|lit| var[lit.net()]).collect();
@@ -120,7 +120,7 @@ fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial>
     poly_map
 }
 
-fn normalize(poly: &mut Polynomial, modulus: Option<&BigInt>) {
+fn normalize(poly: &mut Polynomial, modulus: Option<&Integer>) {
     if let Some(modulus) = modulus {
         poly.mod_by_const(modulus);
     }

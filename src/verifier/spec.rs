@@ -1,14 +1,13 @@
 use crate::circuit::{NetId, NetLit};
 use crate::bipoly::{Polynomial, VarId};
 
-use std::str::FromStr;
-use num_bigint::BigInt;
+use rug::Integer;
 use regex::Regex;
 use log::warn;
 
 #[derive(Debug, Clone)]
 enum SpecExpr {
-    Const(BigInt),
+    Const(Integer),
     Var { width: usize, offset: usize },
     Add(Box<SpecExpr>, Box<SpecExpr>),
     Mul(Box<SpecExpr>, Box<SpecExpr>),
@@ -24,10 +23,10 @@ impl ArithmeticSpec {
     fn bits_to_poly_signed(vars: &[VarId], is_signed: bool) -> Polynomial {
         if let Some((&msb, rest)) = vars.split_last() {
             let weight = if is_signed { -1 } else { 1 };
-            let init = Polynomial::var(msb, BigInt::from(weight));
+            let init = Polynomial::var(msb, Integer::from(weight));
 
             rest.iter().rev().fold(init, |acc, &var| {
-                acc * Polynomial::constant(BigInt::from(2)) + Polynomial::var(var, BigInt::from(1))
+                acc * Polynomial::constant(Integer::from(2)) + Polynomial::var(var, Integer::from(1))
             })
         } else {
             Polynomial::zero()
@@ -62,7 +61,7 @@ impl ArithmeticSpec {
             *offset += width;
             node
         } else {
-            let val = BigInt::from_str(token).map_err(|_| "Invalid constant!")?;
+            let val = token.parse().map_err(|_| "Invalid constant!")?;
             SpecExpr::Const(val)
         };
 
@@ -190,11 +189,11 @@ impl ArithmeticSpec {
         actual_poly - expected_poly
     }
 
-    pub fn modulus(&self, outputs: &[NetLit]) -> Option<BigInt> {
+    pub fn modulus(&self, outputs: &[NetLit]) -> Option<Integer> {
         if let Some(root) = &self.root && matches!(root, SpecExpr::Const(_)) {
             None
         } else {
-            Some(BigInt::from(1) << outputs.len())
+            Some(Integer::from(1) << outputs.len())
         }
     }
 }

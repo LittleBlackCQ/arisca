@@ -1,4 +1,4 @@
-use crate::bipoly::{Polynomial, Monomial};
+use crate::bipoly::{Polynomial};
 
 pub struct SizeGuard {
     max_terms: usize,
@@ -28,39 +28,49 @@ impl SizeGuard {
 }
 
 impl Polynomial {
-    pub fn insert_checked(&mut self, m: Monomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
-        let before = self.size();
-        self.insert(m);
-        let after = self.size();
-        if after > before {
-            guard.check(after)?;
-        }
-        Ok(())
-    }
+    pub fn sub_assign_checked(&mut self, rhs: Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+        let lhs_terms = std::mem::take(&mut self.terms);
+        let rhs_terms = rhs.terms; // Owned
 
-    pub fn add_assign_checked(&mut self, rhs: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
-        for m in rhs.terms().iter() {
-            self.insert_checked(m.clone(), guard)?;
-        }
-        Ok(())
-    }
+        let mut new_terms = Vec::with_capacity(lhs_terms.len() + rhs_terms.len());
+        
+        let mut lhs_iter = lhs_terms.into_iter().peekable();
+        let mut rhs_iter = rhs_terms.into_iter().peekable();
 
-    pub fn sub_assign_checked(&mut self, rhs: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
-        for m in rhs.terms().iter() {
-            self.insert_checked(m.neg(), guard)?;
-        }
-        Ok(())
-    }
+        loop {
+            let which = match (lhs_iter.peek(), rhs_iter.peek()) {
+                (Some(l), Some(r)) => Some(l.cmp(r)),
+                (Some(_), None) => Some(std::cmp::Ordering::Less),
+                (None, Some(_)) => Some(std::cmp::Ordering::Greater),
+                (None, None) => None,
+            };
 
-    pub fn mul_assign_checked(&mut self, rhs: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> { 
-        let mut res = Polynomial::zero();
-        for m1 in self.terms().iter() {
-            for m2 in rhs.terms().iter() {
-                let m = m1.mul(m2);
-                res.insert_checked(m, guard)?;
+            match which {
+                Some(std::cmp::Ordering::Less) => {
+                    new_terms.push(lhs_iter.next().unwrap());
+                }
+                Some(std::cmp::Ordering::Greater) => {
+                    let mut term = rhs_iter.next().unwrap();
+                    term.neg_coeff(); 
+                    new_terms.push(term);
+                }
+                Some(std::cmp::Ordering::Equal) => {
+                    let mut l_term = lhs_iter.next().unwrap();
+                    let mut r_term = rhs_iter.next().unwrap();
+
+                    r_term.neg_coeff();
+                    l_term.add_coeff(r_term.coeff());
+
+                    if !l_term.coeff().is_zero() {
+                        new_terms.push(l_term);
+                    }
+                }
+                None => break,
             }
+            guard.check(new_terms.len())?
         }
-        *self = res;
+
+        self.terms = new_terms;
         Ok(())
     }
 }

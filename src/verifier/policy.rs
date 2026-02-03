@@ -36,7 +36,10 @@ impl ReductionPolicy for LazyGreedyPolicy {
         let candidates = engine.state.var_domain.candidates();
         if candidates.len() == 0 {
             return ReductionAction::Stop;
+        } else if candidates.len() == 1 {
+            return ReductionAction::Reduce(candidates[0]);
         }
+
         let candidates = self.sort_queue_by_occ_penalty(candidates, &engine.state.poly, engine.ctx.poly_map);
         let current_size = engine.state.poly.size() as f64;
 
@@ -91,7 +94,9 @@ impl LazyGreedyPolicy {
         let Some(gate_poly) = engine.ctx.poly_map.get(&var) else { return Ok(reduced_poly); };
         debug!("Try reduce var: {:?} with size: {:?}", var, gate_poly.size());
         let factor = engine.state.poly.divide_by_term(&[var]);
-        reduced_poly.sub_assign_checked(&(gate_poly * factor), guard)?;
+        if factor.is_zero() { return Ok(reduced_poly); }
+
+        reduced_poly.sub_assign_checked(gate_poly * factor, guard)?;
         normalize(&mut reduced_poly, engine.ctx.modulus);
 
         debug!("Polynomial size after try reduce: {:?}", reduced_poly.size());

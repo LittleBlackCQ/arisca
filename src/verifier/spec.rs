@@ -23,10 +23,10 @@ impl ArithmeticSpec {
     fn bits_to_poly_signed(vars: &[VarId], is_signed: bool) -> Polynomial {
         if let Some((&msb, rest)) = vars.split_last() {
             let weight = if is_signed { -1 } else { 1 };
-            let init = Polynomial::var(msb, Integer::from(weight));
+            let init = Polynomial::from_var(msb, Integer::from(weight));
 
             rest.iter().rev().fold(init, |acc, &var| {
-                acc * Polynomial::constant(Integer::from(2)) + Polynomial::var(var, Integer::from(1))
+                acc * Polynomial::from_constant(Integer::from(2)) + Polynomial::from_var(var, Integer::from(1))
             })
         } else {
             Polynomial::zero()
@@ -89,7 +89,7 @@ impl ArithmeticSpec {
 
     fn eval_ast(&self, inputs: &[NetId], node: &SpecExpr, var: &[VarId]) -> Polynomial {
         match node {
-            SpecExpr::Const(v) => Polynomial::constant(v.clone()),
+            SpecExpr::Const(v) => Polynomial::from_constant(v.clone()),
             SpecExpr::Var { width, offset } => {
                 let vars: Vec<VarId> = inputs[*offset .. offset + width]
                     .iter()

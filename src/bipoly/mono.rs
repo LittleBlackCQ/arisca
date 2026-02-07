@@ -5,8 +5,8 @@ pub type Term = Vec<VarId>;
 
 #[derive(Clone, Hash)]
 pub struct Monomial {
-    pub coeff: Integer,
-    pub term: Term,
+    pub(super) coeff: Integer,
+    pub(super) term: Term,
 }
 
 impl Monomial {

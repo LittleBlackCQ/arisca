@@ -26,8 +26,8 @@ impl ReductionPolicy for DefaultPolicy {
 }
 
 pub struct LazyGreedyPolicy {
-    rate_limit: f64,
-    size_limit: usize,
+    max_ratio: f64,
+    abort_ratio: usize,
     penalty: HashMap<VarId, u32>,
 }
 
@@ -45,22 +45,22 @@ impl ReductionPolicy for LazyGreedyPolicy {
 
         let mut best_candidate: Option<(f64, (VarId, Polynomial))> = None;
 
-        let guard = SizeGuard::new(self.size_limit * engine.state.poly.size());
+        let guard = SizeGuard::new(self.abort_ratio * engine.state.poly.size());
         for &var in candidates.iter() { 
             match self.try_reduce_var(var, &guard, engine) {
                 Ok(reduced_poly) => {
-                    let rate = (reduced_poly.size() as f64 - current_size) / current_size;
-                    if rate < self.rate_limit {
+                    let ratio = (reduced_poly.size() as f64 - current_size) / current_size;
+                    if ratio < self.max_ratio {
                         debug!("Choose var: {:?}", var);
                         return ReductionAction::Replace(reduced_poly, var);
                     } else {
                         let value = self.penalty.entry(var).or_insert(1);
                         *value = value.saturating_mul(2);
                         match best_candidate {
-                            None => best_candidate = Some((rate, (var, reduced_poly))),
-                            Some((best_rate, _)) => {
-                                if rate < best_rate {
-                                    best_candidate = Some((rate, (var, reduced_poly)));
+                            None => best_candidate = Some((ratio, (var, reduced_poly))),
+                            Some((best_ratio, _)) => {
+                                if ratio < best_ratio {
+                                    best_candidate = Some((ratio, (var, reduced_poly)));
                                 }
                             }
                         }
@@ -81,10 +81,10 @@ impl ReductionPolicy for LazyGreedyPolicy {
 }
 
 impl LazyGreedyPolicy {
-    pub fn new(rate_limit: f64, size_limit: usize) -> Self {
+    pub fn new(max_ratio: f64, abort_ratio: usize) -> Self {
         LazyGreedyPolicy {
-            rate_limit,
-            size_limit,
+            max_ratio,
+            abort_ratio,
             penalty: HashMap::new(),
         }
     }

@@ -1,4 +1,4 @@
-use super::poly::Polynomial;
+use super::Polynomial;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Neg, Mul, MulAssign};
 
 impl<'a> AddAssign<&'a Polynomial> for Polynomial {

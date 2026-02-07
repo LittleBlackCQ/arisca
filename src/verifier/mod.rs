@@ -59,48 +59,48 @@ fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial>
 
         match node.gate() {
             Gate::And => { 
-                res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone());
             }
             Gate::Or => { 
-                res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1]], one.clone()));
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
+                            (Polynomial::from_var(inputs[0], one.clone())
+                        + Polynomial::from_var(inputs[1], one.clone())
+                        - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone()));
             }
             Gate::Xor => { 
-                res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1]], two.clone()));
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
+                            (Polynomial::from_var(inputs[0], one.clone())
+                        + Polynomial::from_var(inputs[1], one.clone())
+                        - Polynomial::from_term(&[inputs[0], inputs[1]], two.clone()));
             }
             Gate::Xor3 => { 
-                let sum_linear = Polynomial::var(inputs[0], one.clone()) + Polynomial::var(inputs[1], one.clone()) + Polynomial::var(inputs[2], one.clone());
-                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], two.clone()) + Polynomial::term(&[inputs[1], inputs[2]], two.clone()) + Polynomial::term(&[inputs[0], inputs[2]], two.clone());
-                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], four.clone());
+                let sum_linear = Polynomial::from_var(inputs[0], one.clone()) + Polynomial::from_var(inputs[1], one.clone()) + Polynomial::from_var(inputs[2], one.clone());
+                let sum_quad = Polynomial::from_term(&[inputs[0], inputs[1]], two.clone()) + Polynomial::from_term(&[inputs[1], inputs[2]], two.clone()) + Polynomial::from_term(&[inputs[0], inputs[2]], two.clone());
+                let cubic = Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], four.clone());
                 
-                res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_linear - sum_quad + cubic);
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) - (sum_linear - sum_quad + cubic);
             }
             Gate::Maj => { 
-                let sum_quad = Polynomial::term(&[inputs[0], inputs[1]], one.clone()) + Polynomial::term(&[inputs[1], inputs[2]], one.clone()) + Polynomial::term(&[inputs[0], inputs[2]], one.clone());
-                let cubic = Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone());
-                res[0] += Polynomial::var(outputs[0], one.clone()) - (sum_quad - cubic);
+                let sum_quad = Polynomial::from_term(&[inputs[0], inputs[1]], one.clone()) + Polynomial::from_term(&[inputs[1], inputs[2]], one.clone()) + Polynomial::from_term(&[inputs[0], inputs[2]], one.clone());
+                let cubic = Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], two.clone());
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) - (sum_quad - cubic);
             }
             Gate::HalfAdder => {
-                res[0] += Polynomial::var(outputs[0], one.clone()) - Polynomial::term(&[inputs[0], inputs[1]], one.clone());
-                res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone()));
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone());
+                res[1] += Polynomial::from_var(outputs[1], one.clone()) + Polynomial::from_var(outputs[0], two.clone()) -
+                            (Polynomial::from_var(inputs[0], one.clone())
+                        + Polynomial::from_var(inputs[1], one.clone()));
             }
             Gate::FullAdder => {
-                res[0] += Polynomial::var(outputs[0], one.clone()) -
-                            (Polynomial::term(&[inputs[0], inputs[1]], one.clone())
-                        + Polynomial::term(&[inputs[0], inputs[2]], one.clone())
-                        + Polynomial::term(&[inputs[1], inputs[2]], one.clone())
-                        - Polynomial::term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
-                res[1] += Polynomial::var(outputs[1], one.clone()) + Polynomial::var(outputs[0], two.clone()) -
-                            (Polynomial::var(inputs[0], one.clone())
-                        + Polynomial::var(inputs[1], one.clone())
-                        + Polynomial::var(inputs[2], one.clone()));
+                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
+                            (Polynomial::from_term(&[inputs[0], inputs[1]], one.clone())
+                        + Polynomial::from_term(&[inputs[0], inputs[2]], one.clone())
+                        + Polynomial::from_term(&[inputs[1], inputs[2]], one.clone())
+                        - Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
+                res[1] += Polynomial::from_var(outputs[1], one.clone()) + Polynomial::from_var(outputs[0], two.clone()) -
+                            (Polynomial::from_var(inputs[0], one.clone())
+                        + Polynomial::from_var(inputs[1], one.clone())
+                        + Polynomial::from_var(inputs[2], one.clone()));
             }
         }
 
@@ -309,5 +309,5 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     };
     
     let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats));
-    Ok(engine.run(&mut LazyGreedyPolicy::new(0.1, 100)))
+    Ok(engine.run(&mut LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)))
 }

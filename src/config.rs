@@ -17,6 +17,12 @@ pub struct Config {
 
     #[arg(long = "signed")]
     pub signed: bool,
+
+    #[arg(long, default_value_t = 0.1)] 
+    pub max_ratio: f64,
+
+    #[arg(long, default_value_t = 5)]
+    pub abort_ratio: usize,
 }
 
 impl Config {

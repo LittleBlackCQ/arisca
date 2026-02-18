@@ -55,52 +55,49 @@ fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial>
         let inputs: Vec<VarId> = node.inputs().iter().map(|lit| var[lit.net()]).collect();
         let outputs: Vec<VarId> = node.outputs().iter().map(|net| var[*net]).collect();
         
-        let mut res = vec![Polynomial::zero(); node.gate().n_outputs()];
+        let mut res = vec![Polynomial::new(); node.gate().n_outputs()];
 
         match node.gate() {
             Gate::And => { 
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone());
+                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
             }
             Gate::Or => { 
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
-                            (Polynomial::from_var(inputs[0], one.clone())
+                res[0] += Polynomial::from_var(inputs[0], one.clone())
                         + Polynomial::from_var(inputs[1], one.clone())
-                        - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone()));
+                        - Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
             }
             Gate::Xor => { 
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
-                            (Polynomial::from_var(inputs[0], one.clone())
+                res[0] += Polynomial::from_var(inputs[0], one.clone())
                         + Polynomial::from_var(inputs[1], one.clone())
-                        - Polynomial::from_term(&[inputs[0], inputs[1]], two.clone()));
+                        - Polynomial::from_vars(vec![inputs[0], inputs[1]], two.clone());
             }
             Gate::Xor3 => { 
                 let sum_linear = Polynomial::from_var(inputs[0], one.clone()) + Polynomial::from_var(inputs[1], one.clone()) + Polynomial::from_var(inputs[2], one.clone());
-                let sum_quad = Polynomial::from_term(&[inputs[0], inputs[1]], two.clone()) + Polynomial::from_term(&[inputs[1], inputs[2]], two.clone()) + Polynomial::from_term(&[inputs[0], inputs[2]], two.clone());
-                let cubic = Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], four.clone());
+                let sum_quad = Polynomial::from_vars(vec![inputs[0], inputs[1]], two.clone()) + Polynomial::from_vars(vec![inputs[1], inputs[2]], two.clone()) + Polynomial::from_vars(vec![inputs[0], inputs[2]], two.clone());
+                let cubic = Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], four.clone());
                 
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) - (sum_linear - sum_quad + cubic);
+                res[0] += sum_linear - sum_quad + cubic;
             }
             Gate::Maj => { 
-                let sum_quad = Polynomial::from_term(&[inputs[0], inputs[1]], one.clone()) + Polynomial::from_term(&[inputs[1], inputs[2]], one.clone()) + Polynomial::from_term(&[inputs[0], inputs[2]], one.clone());
-                let cubic = Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], two.clone());
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) - (sum_quad - cubic);
+                let sum_quad = Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone()) + Polynomial::from_vars(vec![inputs[1], inputs[2]], one.clone()) + Polynomial::from_vars(vec![inputs[0], inputs[2]], one.clone());
+                let cubic = Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], two.clone());
+                res[0] += sum_quad - cubic;
             }
             Gate::HalfAdder => {
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) - Polynomial::from_term(&[inputs[0], inputs[1]], one.clone());
-                res[1] += Polynomial::from_var(outputs[1], one.clone()) + Polynomial::from_var(outputs[0], two.clone()) -
-                            (Polynomial::from_var(inputs[0], one.clone())
-                        + Polynomial::from_var(inputs[1], one.clone()));
+                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
+                res[1] += - Polynomial::from_var(outputs[0], two.clone())
+                          +(Polynomial::from_var(inputs[0], one.clone())
+                          + Polynomial::from_var(inputs[1], one.clone()));
             }
             Gate::FullAdder => {
-                res[0] += Polynomial::from_var(outputs[0], one.clone()) -
-                            (Polynomial::from_term(&[inputs[0], inputs[1]], one.clone())
-                        + Polynomial::from_term(&[inputs[0], inputs[2]], one.clone())
-                        + Polynomial::from_term(&[inputs[1], inputs[2]], one.clone())
-                        - Polynomial::from_term(&[inputs[0], inputs[1], inputs[2]], two.clone()));
-                res[1] += Polynomial::from_var(outputs[1], one.clone()) + Polynomial::from_var(outputs[0], two.clone()) -
-                            (Polynomial::from_var(inputs[0], one.clone())
-                        + Polynomial::from_var(inputs[1], one.clone())
-                        + Polynomial::from_var(inputs[2], one.clone()));
+                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone())
+                        + Polynomial::from_vars(vec![inputs[0], inputs[2]], one.clone())
+                        + Polynomial::from_vars(vec![inputs[1], inputs[2]], one.clone())
+                        - Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], two.clone());
+                res[1] += - Polynomial::from_var(outputs[0], two.clone())
+                          +(Polynomial::from_var(inputs[0], one.clone())
+                          + Polynomial::from_var(inputs[1], one.clone())
+                          + Polynomial::from_var(inputs[2], one.clone()));
             }
         }
 
@@ -124,8 +121,8 @@ fn normalize(poly: &mut Polynomial, modulus: Option<&Integer>) {
     if let Some(modulus) = modulus {
         poly.mod_by_const(modulus);
     }
-    poly.remove_mono_by(|m| {
-        for pair in m.term().windows(2) {
+    poly.remove_mono_by(|m, _| {
+        for pair in m.vars().windows(2) {
             let (var_i, var_j) = (pair[0], pair[1]);
             if var_j >= 0 {
                 return false;

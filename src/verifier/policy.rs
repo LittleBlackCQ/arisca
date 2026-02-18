@@ -73,6 +73,7 @@ impl ReductionPolicy for LazyGreedyPolicy {
         }
         if let Some((_, (var, reduced_poly))) = best_candidate {
             debug!("Choose var: {:?}", var);
+            debug!("Polynomial size after greedy: {:?}", reduced_poly.size());
             return ReductionAction::Replace(reduced_poly, var);
         } else {
             return ReductionAction::Reduce(candidates[0]);
@@ -93,10 +94,7 @@ impl LazyGreedyPolicy {
         let mut reduced_poly = engine.state.poly.clone();
         let Some(gate_poly) = engine.ctx.poly_map.get(&var) else { return Ok(reduced_poly); };
         debug!("Try reduce var: {:?} with size: {:?}", var, gate_poly.size());
-        let factor = engine.state.poly.divide_by_term(&[var]);
-        if factor.is_zero() { return Ok(reduced_poly); }
-
-        reduced_poly.sub_assign_checked(gate_poly * factor, guard)?;
+        reduced_poly.substitute_by_poly_checked(&var, &gate_poly, guard)?;
         normalize(&mut reduced_poly, engine.ctx.modulus);
 
         debug!("Polynomial size after try reduce: {:?}", reduced_poly.size());
@@ -111,9 +109,8 @@ impl LazyGreedyPolicy {
         let min_q = stats.first().unwrap().0;
         let max_q = stats.last().unwrap().0;
 
-        for mono in poly.terms() {
-            let vars = mono.term();
-
+        for term in poly.terms.keys() {
+            let vars = term.vars();
             if vars.is_empty() || *vars.last().unwrap() < min_q {
                 continue;
             }
@@ -140,7 +137,7 @@ impl LazyGreedyPolicy {
 
         stats.sort_by_key(|(v, count)| {
             count * 
-            poly_map.get(v).unwrap_or(&Polynomial::zero()).size() as u32 *
+            poly_map.get(v).unwrap_or(&Polynomial::new()).size() as u32 *
             *self.penalty.entry(*v).or_insert(1)
         });
         stats.into_iter().map(|(v, _)| v).collect()

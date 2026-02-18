@@ -1,6 +1,8 @@
 use super::Polynomial;
 use std::ops::{Add, AddAssign, Sub, SubAssign, Neg, Mul, MulAssign};
 
+// --- AddAssign ---
+
 impl<'a> AddAssign<&'a Polynomial> for Polynomial {
     fn add_assign(&mut self, rhs: &'a Polynomial) {
         self.add_assign(rhs.clone());
@@ -12,6 +14,8 @@ impl AddAssign<Polynomial> for Polynomial {
         self.add_assign(rhs);
     }
 }
+
+// --- SubAssign ---
 
 impl<'a> SubAssign<&'a Polynomial> for Polynomial {
     fn sub_assign(&mut self, rhs: &'a Polynomial) {
@@ -25,22 +29,28 @@ impl SubAssign<Polynomial> for Polynomial {
     }
 }
 
+// --- MulAssign ---
+
 impl<'a> MulAssign<&'a Polynomial> for Polynomial {
     fn mul_assign(&mut self, rhs: &'a Polynomial) {
-        self.mul_assign(rhs.clone());
+        self.mul_assign(rhs);
     }
 }
 
 impl MulAssign<Polynomial> for Polynomial {
     fn mul_assign(&mut self, rhs: Polynomial) {
-        self.mul_assign(rhs);
+        self.mul_assign(&rhs);
     }
 }
+
+// --- Negation ---
 
 impl Neg for Polynomial {
     type Output = Polynomial;
     fn neg(mut self) -> Self::Output {
-        self.neg_assign();
+        for val in self.terms.values_mut() {
+            *val = -std::mem::take(val);
+        }
         self
     }
 }
@@ -49,10 +59,14 @@ impl<'a> Neg for &'a Polynomial {
     type Output = Polynomial;
     fn neg(self) -> Polynomial {
         let mut res = self.clone();
-        res.neg_assign();
+        for val in res.terms.values_mut() {
+            *val = -std::mem::take(val);
+        }
         res
     }
 }
+
+// --- Addition ---
 
 impl Add<Polynomial> for Polynomial {
     type Output = Polynomial;
@@ -86,6 +100,8 @@ impl<'a, 'b> Add<&'b Polynomial> for &'a Polynomial {
         res
     }
 }
+
+// --- Subtraction ---
 
 impl Sub<Polynomial> for Polynomial {
     type Output = Polynomial;
@@ -121,10 +137,12 @@ impl<'a, 'b> Sub<&'b Polynomial> for &'a Polynomial {
     }
 }
 
+// --- Multiplication ---
+
 impl Mul<Polynomial> for Polynomial {
     type Output = Polynomial;
     fn mul(mut self, rhs: Polynomial) -> Self::Output {
-        self.mul_assign(rhs);
+        self.mul_assign(&rhs);
         self
     }
 }
@@ -140,7 +158,7 @@ impl<'a> Mul<&'a Polynomial> for Polynomial {
 impl<'a> Mul<Polynomial> for &'a Polynomial {
     type Output = Polynomial;
     fn mul(self, mut rhs: Polynomial) -> Polynomial {
-        rhs *= self;
+        rhs.mul_assign(self);
         rhs
     }
 }

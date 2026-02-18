@@ -29,7 +29,7 @@ impl ArithmeticSpec {
                 acc * Polynomial::from_constant(Integer::from(2)) + Polynomial::from_var(var, Integer::from(1))
             })
         } else {
-            Polynomial::zero()
+            Polynomial::new()
         }
     }
 

@@ -15,7 +15,7 @@ pub struct Config {
     #[arg(short = 's', long = "spec", value_name = "INPUT_SPEC")]
     pub spec_str: Option<String>,
 
-    #[arg(long = "signed")]
+    #[arg(long)]
     pub signed: bool,
 
     #[arg(long, default_value_t = 0.1)] 
@@ -23,6 +23,9 @@ pub struct Config {
 
     #[arg(long, default_value_t = 5)]
     pub abort_ratio: usize,
+
+    #[arg(long, default_value_t = false)]
+    pub no_flip: bool,
 }
 
 impl Config {

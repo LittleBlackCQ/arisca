@@ -136,11 +136,17 @@ impl Polynomial {
         res
     }
 
-    pub fn substitute_by_poly(&mut self, v: &VarId, poly: &Polynomial) {
+    pub fn substitute_by_poly(&mut self, v: &VarId, poly: &Polynomial, flipped: bool) {
         let mut new_poly = Polynomial::new();
         self.terms.retain(|term, coeff| {
             if let Some(new_term) = term.remove_var(v) {
-                new_poly += Polynomial::from_term(new_term, coeff.clone()) * poly;
+                let term_poly = Polynomial::from_term(new_term, coeff.clone());
+                if flipped {
+                    new_poly += term_poly.clone() - (term_poly * poly);
+                } else {
+                    new_poly += term_poly * poly;
+                }
+                
                 false
             } else {
                 true
@@ -225,16 +231,14 @@ mod tests {
 
     #[test]
     fn test_neg_var() { 
-        let mut a = Polynomial::new();
-        a.insert(Term::new(vec![0, 1]), Integer::from(1));
+        let a = Polynomial::from_var(0, Integer::from(1));
+        let b = Polynomial::from_var(1, Integer::from(1));
+        let one = Polynomial::from_constant(Integer::from(1));
 
-        a.neg_var(&0);
-        a.neg_var(&1);
+        let mut c = (&one - a) * (&one - b);
 
-        assert_eq!(format!("{:?}", a), "1-1x0+1x0*x1-1x1");
-
-        let b = Polynomial::from_constant(Integer::from(1));
-        a = b - a;
-        assert_eq!(format!("{:?}", a), "1x0-1x0*x1+1x1");
+        c.neg_var(&0);
+        c.neg_var(&1);
+        assert_eq!(format!("{:?}", c), "1x0*x1");
     }
 }

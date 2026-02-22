@@ -18,8 +18,12 @@ impl NetLit {
         }
     }
 
-    pub fn positive(net: NetId) -> Self {
+    pub fn from_positive(net: NetId) -> Self {
         NetLit::new(net, false)
+    }
+
+    pub fn from_negative(net: NetId) -> Self {
+        NetLit::new(net, true)
     }
 
     pub fn negative(&self) -> bool {

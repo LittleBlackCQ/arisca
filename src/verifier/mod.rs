@@ -4,6 +4,7 @@ pub mod guard;
 pub mod topo;
 pub mod engine;
 pub mod stats;
+pub mod flip;
 
 pub use stats::ReductionStats;
 use spec::ArithmeticSpec;
@@ -11,6 +12,7 @@ use policy::{ReductionPolicy, ReductionAction, DefaultPolicy, LazyGreedyPolicy};
 use engine::ReductionEngine;
 use topo::{VarDomain, VecVar, TopoVar};
 use guard::{SizeGuard, SizeLimitExceeded};
+use flip::FlipManager;
 use crate::circuit::{Circuit, NetId, NodeId, Gate, Cone};
 use crate::bipoly::{Polynomial, VarId};
 use crate::config::Config;
@@ -18,6 +20,7 @@ use crate::config::Config;
 use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
 use rug::Integer;
+use log::debug;
 
 pub struct ReductionContext<'a> {
     pub circuit: &'a Circuit,
@@ -32,7 +35,7 @@ pub struct ReductionState {
 }
 
 // map half adder outputs to negative to make the reduction faster
-fn init_vars(circuit: &Circuit) -> Vec<VarId> {
+pub fn init_vars(circuit: &Circuit) -> Vec<VarId> {
     let mut vars: Vec<VarId> = (0..circuit.nets().len() as i32).collect();
     circuit.nodes().iter().filter(|&node| {
         *node.gate() == Gate::HalfAdder 
@@ -44,7 +47,7 @@ fn init_vars(circuit: &Circuit) -> Vec<VarId> {
     vars
 }
 
-fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial> {
+pub fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynomial> {
     let mut poly_map = HashMap::new();
 
     let one = Integer::from(1);
@@ -195,23 +198,49 @@ fn find_ffcc(circuit: &Circuit, vars: &[VarId]) -> Vec<(Cone, bool)> {
                 .count() * 8 > final_inputs.len() * 3; // has is more than 3/4 of the inputs
 
             if is_converging {
-                fn collect_ordered(net: NetId, circuit: &Circuit, inputs: &HashSet<NetId>, acc_nets: &mut Vec<NetId>, acc_nodes: &mut Vec<NodeId>) {
+                fn get_depth(
+                    net: NetId, 
+                    circuit: &Circuit, 
+                    inputs: &HashSet<NetId>, 
+                    depth_map: &mut HashMap<NetId, usize>
+                ) -> usize {
+                    if inputs.contains(&net) { return 0; }
+                    if let Some(&d) = depth_map.get(&net) { return d; }
+                    
+                    let depth = if let Some(driver) = circuit.nets_at(net).driver() {
+                        let node = circuit.nodes_at(driver);
+                        let max_child_depth = node.inputs().iter()
+                            .map(|l| get_depth(l.net(), circuit, inputs, depth_map))
+                            .max()
+                            .unwrap_or(0);
+                        max_child_depth + 1
+                    } else {
+                        0
+                    };
+                    depth_map.insert(net, depth);
+                    depth
+                }
+
+                let mut depth_map = HashMap::new();
+                get_depth(cone.root, circuit, &final_inputs, &mut depth_map);
+
+                fn collect_ordered(net: NetId, circuit: &Circuit, inputs: &HashSet<NetId>, depth_map: &HashMap<NetId, usize>, acc_nets: &mut Vec<NetId>, acc_nodes: &mut Vec<NodeId>) {
                     if inputs.contains(&net) { return; }
                     
                     if let Some(driver) = circuit.nets_at(net).driver() {
                         let node = circuit.nodes_at(driver);
                         
-                        let children: Vec<NetId> = node.inputs().iter().map(|l| l.net()).sorted().rev().collect();
+                        let children: Vec<NetId> = node.inputs().iter().map(|l| l.net()).sorted_by_key(|c| depth_map.get(c).copied().unwrap_or(0)).collect();
 
-                        for child in children {
-                            collect_ordered(child, circuit, inputs, acc_nets, acc_nodes);
+                        for child in children.into_iter().rev() {
+                            collect_ordered(child, circuit, inputs, depth_map, acc_nets, acc_nodes);
                         }
 
                         acc_nodes.push(driver);
                         acc_nets.push(net);
                     }
                 }
-                collect_ordered(cone.root, circuit, &final_inputs, &mut final_nets, &mut final_nodes);
+                collect_ordered(cone.root, circuit, &final_inputs, &depth_map, &mut final_nets, &mut final_nodes);
                 (Cone { root: cone.root, inputs: final_inputs.into_iter().collect(), nodes: final_nodes, nets: final_nets }, true)
             } else {
                 (cone.clone(), false)
@@ -263,8 +292,11 @@ fn process_cone(
         }
     };
 
-    let engine = ReductionEngine::new(&ctx, state, None);
-    engine.run(&mut DefaultPolicy {})
+    let mut stats = ReductionStats::default();
+    let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false);
+    let ret = engine.run(&mut DefaultPolicy {});
+    debug!("Cone(converging: {:?}) size after reduction: {:?}, max size: {:?}", is_converging, ret.size(), stats.max_size);
+    ret
 }
 
 pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial, String> {
@@ -305,6 +337,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         var_domain: Box::new(TopoVar::new(final_adj)),
     };
     
-    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats));
+    debug!("Start main reduction...");
+    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), !cfg.no_flip);
     Ok(engine.run(&mut LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)))
 }

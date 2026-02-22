@@ -2,6 +2,7 @@ use super::{ReductionEngine, SizeGuard, SizeLimitExceeded, normalize};
 use crate::bipoly::{Polynomial, VarId};
 
 use std::collections::HashMap;
+use rand::{seq::SliceRandom, thread_rng};
 use log::debug;
 
 pub enum ReductionAction {
@@ -23,6 +24,18 @@ impl ReductionPolicy for DefaultPolicy {
             ReductionAction::Stop
         }
     }
+}
+
+pub struct RandomPolicy;
+impl ReductionPolicy for RandomPolicy {
+    fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
+        if let Some(v) = engine.state.var_domain.candidates().choose(&mut thread_rng()) {
+            ReductionAction::Reduce(*v)
+        } else {
+            ReductionAction::Stop
+        }
+    }
+
 }
 
 pub struct LazyGreedyPolicy {
@@ -94,7 +107,7 @@ impl LazyGreedyPolicy {
         let mut reduced_poly = engine.state.poly.clone();
         let Some(gate_poly) = engine.ctx.poly_map.get(&var) else { return Ok(reduced_poly); };
         debug!("Try reduce var: {:?} with size: {:?}", var, gate_poly.size());
-        reduced_poly.substitute_by_poly_checked(&var, &gate_poly, guard)?;
+        reduced_poly.substitute_by_poly_checked(&var, &gate_poly, engine.is_flip(&var), guard)?;
         normalize(&mut reduced_poly, engine.ctx.modulus);
 
         debug!("Polynomial size after try reduce: {:?}", reduced_poly.size());

@@ -68,11 +68,16 @@ impl Polynomial {
         Ok(())
     }
 
-    pub fn substitute_by_poly_checked(&mut self, v: &VarId, poly: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn substitute_by_poly_checked(&mut self, v: &VarId, poly: &Polynomial, flipped: bool, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
         let mut new_poly = Polynomial::new();
         self.terms.retain(|term, coeff| {
             if let Some(new_term) = term.remove_var(v) {
-                new_poly += Polynomial::from_term(new_term, coeff.clone()) * poly;
+                let term_poly = Polynomial::from_term(new_term, coeff.clone());
+                if flipped {
+                    new_poly += term_poly.clone() - (term_poly * poly);
+                } else {
+                    new_poly += term_poly * poly;
+                }
                 false
             } else {
                 true

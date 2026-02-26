@@ -49,7 +49,7 @@ fn get_gate_color(g: &Gate) -> &'static str {
 }
 
 impl Circuit {
-   pub fn to_dot<P: AsRef<Path>>(&self, path: P, cone: Option<&Cone>) {
+   pub fn to_dot(&self, path: impl AsRef<Path>, cone: Option<&Cone>) {
         let mut dot = String::new();
 
         let (valid_nodes, valid_cone_inputs, cone_root) = if let Some(c) = cone {

@@ -4,10 +4,11 @@ pub mod debug;
 pub mod extractor;
 pub mod cut;
 pub mod sim;
+mod to_aig;
 
-pub use crate::circuit::basics::{Node, Net, NetId, NodeId, NetLit, Cone};
-pub use crate::circuit::extractor::AdderExtractor;
-pub use crate::circuit::gate::Gate;
+pub use basics::{Node, Net, NetId, NodeId, NetLit, Cone};
+pub use extractor::AdderExtractor;
+pub use gate::Gate;
 
 pub struct Circuit {
     nodes: Vec<Node>,

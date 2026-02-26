@@ -1,6 +1,7 @@
 use libc::{FILE, fclose, fopen};
 use std::{
-    ffi::{CString, c_char, c_void}, path::Path
+    ffi::{CString, c_char, c_void}, path::Path,
+    fs::File, io::{self, Write, BufWriter, Error, ErrorKind}
 };
 use log::warn;
 
@@ -126,4 +127,81 @@ impl AigerParser {
 
         Ok(circuit)
     }
+}
+
+fn encode_delta_to_writer<W: Write>(writer: &mut W, mut delta: usize) -> io::Result<()> {
+    while delta >= 0x80 {
+        writer.write_all(&[((delta & 0x7f) | 0x80) as u8])?;
+        delta >>= 7;
+    }
+    writer.write_all(&[delta as u8])?;
+    Ok(())
+}
+
+pub struct AigData {
+    pub inputs: Vec<usize>,
+    pub outputs: Vec<usize>,
+    pub and_gates: Vec<(usize, usize, usize)>,
+}
+
+pub trait ToAig {
+    fn get_aig_data(&self) -> AigData;
+
+    fn write_aig(&self, path: impl AsRef<Path>) -> io::Result<()> {
+        let path_ref = path.as_ref();
+        let ext = path_ref.extension().and_then(|s| s.to_str());
+        let is_binary = match ext {
+            Some("aig") => true,
+            Some("aag") => false,
+            _ => return Err(Error::new(ErrorKind::InvalidInput, "Extension must be .aig or .aag")),
+        };
+
+        let mut data = self.get_aig_data();
+        data.and_gates.sort_by_key(|g| g.0);
+
+        let (i, l, o, a) = (data.inputs.len(), 0, data.outputs.len(), data.and_gates.len());
+        let mut max_id = 0;
+        for &id in &data.inputs { max_id = max_id.max(id); }
+        for &id in &data.outputs { max_id = max_id.max(id); }
+        for &(out, in1, in2) in &data.and_gates { max_id = max_id.max(out).max(in1).max(in2); }
+        let m = max_id / 2;
+
+        let file = File::create(path_ref)?;
+        let mut writer = BufWriter::new(file);
+
+        write!(writer, "{} {} {} {} {} {}\n", if is_binary { "aig" } else { "aag" }, m, i, l, o, a)?;
+
+        if !is_binary {
+            for id in data.inputs { writeln!(writer, "{}", id)?; }
+        }
+        for id in data.outputs { writeln!(writer, "{}", id)?; }
+
+        if !is_binary {
+            for (out, in1, in2) in data.and_gates {
+                writeln!(writer, "{} {} {}", out, in1, in2)?;
+            }
+        } else {
+            let mut expected_lhs = (i + l) * 2 + 2;
+
+            for (out, in1, in2) in data.and_gates {
+                if out != expected_lhs {
+                    return Err(Error::new(
+                        ErrorKind::InvalidData,
+                        format!("Binary AIGER requires contiguous IDs. Expected {}, got {}", expected_lhs, out)
+                    ));
+                }
+
+                let (rhs0, rhs1) = if in1 >= in2 { (in1, in2) } else { (in2, in1) };
+                
+                encode_delta_to_writer(&mut writer, out - rhs0)?;
+                encode_delta_to_writer(&mut writer, rhs0 - rhs1)?;
+                
+                expected_lhs += 2;
+            }
+        }
+        writer.flush()?;
+        Ok(())
+    }
+
+
 }

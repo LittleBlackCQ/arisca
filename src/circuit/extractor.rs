@@ -2,7 +2,7 @@ use super::*;
 use super::sim::Simulator;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use log::info;
+use log::{info, debug};
 
 pub trait ExtractorStrategy {
     fn cut_size(&self) -> usize;
@@ -321,6 +321,7 @@ impl AdderExtractor {
 
                 // A very common special case in adders
                 if *node.gate() == Gate::And && let Some(driver1) = new_circuit.nets_at(inputs[0].net()).driver() && let Some(driver2) = new_circuit.nets_at(inputs[1].net()).driver() && driver1 == driver2 {
+                    debug!("Special case: Half adder with same inputs");
                     let node = new_circuit.nodes_at(driver1);
                     if *new_circuit.nodes_at(driver1).gate() == Gate::HalfAdder {
                         let (mut s_lit, mut c_lit) = (inputs[0], inputs[1]);

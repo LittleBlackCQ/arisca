@@ -10,21 +10,21 @@ pub enum Gate {
 }
 
 impl Gate {
-    pub fn n_inputs(self) -> usize {
+    pub fn n_inputs(&self) -> usize {
         match self {
             Gate::And | Gate::Or | Gate::Xor | Gate::HalfAdder => 2,
             Gate::FullAdder | Gate::Xor3 | Gate::Maj => 3,
         }
     }
 
-    pub fn n_outputs(self) -> usize {
+    pub fn n_outputs(&self) -> usize {
         match self {
             Gate::And | Gate::Or | Gate::Xor | Gate::Xor3 | Gate::Maj => 1,
             Gate::HalfAdder | Gate::FullAdder => 2,
         }
     }
 
-    pub fn name(self) -> &'static str {
+    pub fn name(&self) -> &'static str {
         match self {
             Gate::And => "and",
             Gate::Or => "or",
@@ -36,7 +36,7 @@ impl Gate {
         }
     }
 
-    pub fn logic(self, inputs: &[bool]) -> Vec<bool> {
+    pub fn logic(&self, inputs: &[bool]) -> Vec<bool> {
         debug_assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {:?} in logic.", self.name());
         let mut outputs = vec![false; self.n_outputs()];
         match self {

@@ -2,7 +2,10 @@ use clap::{Parser, ValueEnum};
 use std::path::PathBuf;
 use env_logger::{Builder, Env, Target};
 
-use arisca::{aiger::AigerParser, circuit::AdderExtractor, circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}};
+use arisca::{
+    aiger::{AigerParser, ToAig}, 
+    circuit::AdderExtractor, 
+    circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}};
 
 #[derive(Clone, ValueEnum)]
 enum ExtractMode {
@@ -23,6 +26,9 @@ struct Config {
 
     #[arg(short, long, value_name = "DOT_FILE")]
     dot_file: Option<PathBuf>,
+    
+    #[arg(short = 'a', long = "aig", value_name = "OUTPUT_AIG")]
+    aig_file: Option<PathBuf>,
 }
 
 fn main() -> Result<(), String>{
@@ -47,7 +53,15 @@ fn main() -> Result<(), String>{
         }
     }
     if let Some(dot_file) = args.dot_file {
-        circuit.to_dot(dot_file, None);
+        circuit.to_dot(&dot_file, None);
+        log::info!("DOT file written to: {:?}", dot_file);
+    }
+
+    if let Some(aig_output_path) = args.aig_file {
+        circuit.write_aig(&aig_output_path)
+            .map_err(|e| format!("Failed to write AIG file: {}", e))?;
+        
+        log::info!("AIG file written to: {:?}", aig_output_path);
     }
     Ok(())
 }

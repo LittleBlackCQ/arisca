@@ -86,7 +86,6 @@ impl ReductionPolicy for LazyGreedyPolicy {
         }
         if let Some((_, (var, reduced_poly))) = best_candidate {
             debug!("Choose var: {:?}", var);
-            debug!("Polynomial size after greedy: {:?}", reduced_poly.size());
             return ReductionAction::Replace(reduced_poly, var);
         } else {
             return ReductionAction::Reduce(candidates[0]);
@@ -106,11 +105,11 @@ impl LazyGreedyPolicy {
     fn try_reduce_var(&mut self, var: VarId, guard: &SizeGuard, engine: &mut ReductionEngine) -> Result<Polynomial, SizeLimitExceeded> {
         let mut reduced_poly = engine.state.poly.clone();
         let Some(gate_poly) = engine.ctx.poly_map.get(&var) else { return Ok(reduced_poly); };
-        debug!("Try reduce var: {:?} with size: {:?}", var, gate_poly.size());
+        debug!("Try reduce var: {:?}, size: {:?}", var, gate_poly.size());
         reduced_poly.substitute_by_poly_checked(&var, &gate_poly, engine.is_flip(&var), guard)?;
         normalize(&mut reduced_poly, engine.ctx.modulus);
 
-        debug!("Polynomial size after try reduce: {:?}", reduced_poly.size());
+        debug!("Size: {:?} (try)", reduced_poly.size());
 
         Ok(reduced_poly)
     }

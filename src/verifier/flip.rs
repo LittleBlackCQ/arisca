@@ -28,7 +28,7 @@ impl FlipManager {
 
                 let origin_size = origin_poly.size();
                 let new_size = poly.size();
-                debug!("Try flip var {:?}, poly size: {} -> {:?}", v, origin_size, new_size);
+                debug!("Try flip var {:?}, size: {} -> {:?}", v, origin_size, new_size);
                 if new_size < origin_size {
                     self.flipped_vars.insert(*v);
                 } else {

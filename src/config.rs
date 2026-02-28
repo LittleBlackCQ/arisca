@@ -1,7 +1,15 @@
-use clap::Parser;
+use clap::{Parser, ValueEnum, value_parser};
 use std::path::PathBuf;
 use std::fs::File;
 use env_logger::{Builder, Env, Target};
+
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ReductionMode {
+    DFS,
+    BFS,
+    Random,
+    Heuristic,
+}
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -26,6 +34,12 @@ pub struct Config {
 
     #[arg(long, default_value_t = false)]
     pub no_flip: bool,
+
+    #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic)]
+    pub mode: ReductionMode,
+
+    #[arg(short = 'r', value_parser = value_parser!(u8).range(0..=10), default_value_t = 5)]
+    pub revsca_sensitivity: u8,
 }
 
 impl Config {

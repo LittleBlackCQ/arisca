@@ -28,18 +28,17 @@ impl<'a> ReductionEngine<'a> {
 
     pub fn reduce_var(&mut self, var: VarId) {
         let Some(gate_poly) = self.ctx.poly_map.get(&var) else { return; };
-        debug!("Reduce var: {:?} with size: {:?}", var, gate_poly.size());
+        debug!("Reduce var: {:?}, size: {:?}", var, gate_poly.size());
 
         let factor = self.state.poly.divide_by_var(&var);
         if factor.is_zero() { return; }
 
         self.state.poly.substitute_by_poly(&var, gate_poly, self.is_flip(&var));
         normalize(&mut self.state.poly, self.ctx.modulus);
-        debug!("Polynomial size after reduce: {:?}", self.state.poly.size());
     }
 
-    pub fn run<P: ReductionPolicy>(mut self, policy: &mut P) -> Polynomial {
-
+    pub fn run(mut self, policy: &mut dyn ReductionPolicy) -> Polynomial {
+        let mut curr = 0;
         loop {
             match policy.next_action(&mut self) {
                 ReductionAction::Stop => break,
@@ -52,6 +51,8 @@ impl<'a> ReductionEngine<'a> {
                     self.state.var_domain.update(var);
                 }
             }
+            curr += 1;
+            debug!("Size: {:?}, {:?}/{:?}", self.state.poly.size(), curr, self.state.var_domain.len());
 
             if let Some(flip_manager) = &mut self.flip_manager {
                 flip_manager.greedy_flip(&mut self.state.poly, self.state.var_domain.candidates());

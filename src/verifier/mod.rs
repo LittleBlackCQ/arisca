@@ -8,14 +8,14 @@ pub mod flip;
 
 pub use stats::ReductionStats;
 use spec::ArithmeticSpec;
-use policy::{ReductionPolicy, ReductionAction, DefaultPolicy, LazyGreedyPolicy};
+use policy::{ReductionPolicy, ReductionAction, RandomPolicy, DefaultPolicy, LazyGreedyPolicy};
 use engine::ReductionEngine;
 use topo::{VarDomain, VecVar, TopoVar};
 use guard::{SizeGuard, SizeLimitExceeded};
 use flip::FlipManager;
 use crate::circuit::{Circuit, NetId, NodeId, Gate, Cone};
 use crate::bipoly::{Polynomial, VarId};
-use crate::config::Config;
+use crate::config::{ReductionMode, Config};
 
 use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
@@ -137,7 +137,7 @@ fn normalize(poly: &mut Polynomial, modulus: Option<&Integer>) {
     });
 }
 
-fn find_ffcc(circuit: &Circuit, vars: &[VarId]) -> Vec<(Cone, bool)> {
+fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Cone, bool)> {
     let terminals: HashSet<NetId> = circuit.nets().iter().enumerate().filter_map(|(net_id, net)| {
         if let Some(driver) = net.driver() {
             if circuit.nodes_at(driver).is_multioutput() {
@@ -195,7 +195,7 @@ fn find_ffcc(circuit: &Circuit, vars: &[VarId]) -> Vec<(Cone, bool)> {
                 .sorted()
                 .tuple_windows()
                 .filter(|&(a, b)| b < 0 && (b - a) == 1)
-                .count() * 8 > final_inputs.len() * 3; // has is more than 3/4 of the inputs
+                .count() * 20 > final_inputs.len() * sensitivity as usize; // sensitivity: 0-10
 
             if is_converging {
                 fn get_depth(
@@ -295,7 +295,7 @@ fn process_cone(
     let mut stats = ReductionStats::default();
     let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false);
     let ret = engine.run(&mut DefaultPolicy {});
-    debug!("Cone(converging: {:?}) size after reduction: {:?}, max size: {:?}", is_converging, ret.size(), stats.max_size);
+    debug!("Cone {:?}(converging: {:?}) poly size: {:?}, max size: {:?}", cone, is_converging, ret.size(), stats.max_size);
     ret
 }
 
@@ -308,7 +308,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
 
     let mut final_adj: HashMap<i32, Vec<i32>> = HashMap::new();
 
-    for (cone, is_converging) in find_ffcc(circuit, &vars) {
+    for (cone, is_converging) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
         poly_map.insert(vars[cone.root], process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, &mut final_adj));
     }
 
@@ -332,12 +332,24 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         poly_map: &poly_map,
     };
 
+    let main_vardomain: Box<dyn VarDomain> = match cfg.mode {
+        ReductionMode::BFS => Box::new(VecVar::new(TopoVar::new(final_adj).bfs())),
+        ReductionMode::DFS => Box::new(VecVar::new(TopoVar::new(final_adj).dfs())),
+        ReductionMode::Random | ReductionMode::Heuristic => Box::new(TopoVar::new(final_adj)),
+    };
+
+    let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
+        ReductionMode::BFS | ReductionMode::DFS => Box::new(DefaultPolicy {}),
+        ReductionMode::Random => Box::new(RandomPolicy {}),
+        ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)),
+    };
+
     let main_state = ReductionState {
         poly: spec.build_golden(circuit.inputs(), circuit.outputs(), &vars),
-        var_domain: Box::new(TopoVar::new(final_adj)),
+        var_domain: main_vardomain,
     };
     
     debug!("Start main reduction...");
     let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), !cfg.no_flip);
-    Ok(engine.run(&mut LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)))
+    Ok(engine.run(&mut *main_policy))
 }

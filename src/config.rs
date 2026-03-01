@@ -35,6 +35,9 @@ pub struct Config {
     #[arg(long, default_value_t = false)]
     pub no_flip: bool,
 
+    #[arg(long, default_value_t = false)]
+    pub portfolio: bool,
+
     #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic)]
     pub mode: ReductionMode,
 

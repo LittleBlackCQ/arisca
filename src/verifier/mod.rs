@@ -292,7 +292,7 @@ fn process_cone(
         }
     };
 
-    let mut stats = ReductionStats::default();
+    let mut stats = ReductionStats::new();
     let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false);
     let ret = engine.run(&mut DefaultPolicy {});
     debug!("Cone {:?}(converging: {:?}) poly size: {:?}, max size: {:?}", cone, is_converging, ret.size(), stats.max_size);

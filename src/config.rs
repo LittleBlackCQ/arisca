@@ -23,25 +23,28 @@ pub struct Config {
     #[arg(short = 's', long = "spec", value_name = "INPUT_SPEC")]
     pub spec_str: Option<String>,
 
-    #[arg(long)]
+    #[arg(long, help = "Whether the input spec is signed")]
     pub signed: bool,
 
-    #[arg(long, default_value_t = 0.1)] 
+    #[arg(long, default_value_t = 0.1, help = "Maximum size ratio between the reduced polynomial size and the original size")] 
     pub max_ratio: f64,
 
-    #[arg(long, default_value_t = 5)]
+    #[arg(long, default_value_t = 5, help = "Abort if the size ratio between the reduced polynomial size and the original size is larger than this value")]
     pub abort_ratio: usize,
 
-    #[arg(long, default_value_t = false)]
-    pub no_flip: bool,
+    #[arg(long, default_value_t = 10000000, help = "Polynomial size limit")] 
+    pub size_limit: usize,
 
-    #[arg(long, default_value_t = false)]
+    #[arg(long, default_value_t = false, help = "Enable dual variables")]
+    pub flip: bool,
+
+    #[arg(long, default_value_t = false, help = "Enable portfolio mode")]
     pub portfolio: bool,
 
-    #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic)]
+    #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic, help = "Reduction mode")]
     pub mode: ReductionMode,
 
-    #[arg(short = 'r', value_parser = value_parser!(u8).range(0..=10), default_value_t = 5)]
+    #[arg(short = 'r', value_parser = value_parser!(u8).range(0..=10), default_value_t = 5, help = "Sensitity to identify converging cones based on the ratio of half adders")]
     pub revsca_sensitivity: u8,
 }
 

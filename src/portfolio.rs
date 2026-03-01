@@ -14,7 +14,6 @@ use std::{
 };
 
 pub struct Portfolio {
-    // base_config: Config,
     configs: Vec<(String, Config)>,
 }
 
@@ -42,11 +41,11 @@ impl Portfolio {
                 }
             }
         };
-        add_config("--max-ratio 0.01");
         add_config("--max-ratio 0.01 -r 9");
         add_config("--max-ratio 0.01 -r 5");
-        add_config("-m bfs");
-        add_config("-m dfs");
+        add_config("-m bfs -r 9");
+        add_config("-m bfs -r 5");
+        add_config("-m dfs -r 5");
 
         Self {
             // base_config: cfg,
@@ -86,7 +85,7 @@ impl Portfolio {
                 Err(e) => {
                     info!("{} failed: {:?}", worker_name, e);
                     if completed == total_workers {
-                        return Err("All portfolio workers failed verification.".into());
+                        return Err("All portfolio workers failed.".into());
                     }
                 }
             }

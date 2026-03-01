@@ -255,7 +255,7 @@ fn process_cone(
     is_converging: bool,
     ctx: ReductionContext,
     final_adj: &mut HashMap<VarId, Vec<VarId>>,
-) -> Polynomial {
+) -> Result<Polynomial, String> {
     let root_var = ctx.vars[cone.root];
     
     final_adj.insert(
@@ -293,10 +293,10 @@ fn process_cone(
     };
 
     let mut stats = ReductionStats::new();
-    let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false);
-    let ret = engine.run(&mut DefaultPolicy {});
-    debug!("Cone {:?}(converging: {:?}) poly size: {:?}, max size: {:?}", cone, is_converging, ret.size(), stats.max_size);
-    ret
+    let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false, None);
+    let ret = engine.run(&mut DefaultPolicy {})?;
+    debug!("Cone {:?}(converging: {:?}) poly size: {:?}, max size: {:?}", cone.root, is_converging, ret.size(), stats.max_size);
+    Ok(ret)
 }
 
 pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial, String> {
@@ -309,7 +309,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let mut final_adj: HashMap<i32, Vec<i32>> = HashMap::new();
 
     for (cone, is_converging) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
-        poly_map.insert(vars[cone.root], process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, &mut final_adj));
+        poly_map.insert(vars[cone.root], process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, &mut final_adj)?);
     }
 
     final_adj.extend(circuit.nodes().iter()
@@ -350,6 +350,6 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     };
     
     debug!("Start main reduction...");
-    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), !cfg.no_flip);
-    Ok(engine.run(&mut *main_policy))
+    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), cfg.flip, Some(cfg.size_limit));
+    engine.run(&mut *main_policy)
 }

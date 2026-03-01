@@ -9,13 +9,14 @@ pub struct ReductionEngine<'a> {
     pub stats: Option<&'a mut ReductionStats>,
     pub state: ReductionState,
     pub flip_manager: Option<FlipManager>,
+    pub size_limit: Option<usize>,
 }
 
 impl<'a> ReductionEngine<'a> {
 
-    pub fn new(ctx: &'a ReductionContext, state: ReductionState, stats: Option<&'a mut ReductionStats>, flip: bool) -> Self {
+    pub fn new(ctx: &'a ReductionContext, state: ReductionState, stats: Option<&'a mut ReductionStats>, flip: bool, size_limit: Option<usize>) -> Self {
         let flip_manager = if flip { Some(FlipManager::new()) } else { None };
-        Self { ctx, state, stats, flip_manager }
+        Self { ctx, state, stats, flip_manager, size_limit }
     }
 
     pub fn is_flip(&self, var: &VarId) -> bool {
@@ -37,7 +38,7 @@ impl<'a> ReductionEngine<'a> {
         normalize(&mut self.state.poly, self.ctx.modulus);
     }
 
-    pub fn run(mut self, policy: &mut dyn ReductionPolicy) -> Polynomial {
+    pub fn run(mut self, policy: &mut dyn ReductionPolicy) -> Result<Polynomial, String> {
         let mut curr = 0;
         loop {
             match policy.next_action(&mut self) {
@@ -51,16 +52,23 @@ impl<'a> ReductionEngine<'a> {
                     self.state.var_domain.update(var);
                 }
             }
-            curr += 1;
-            debug!("Size: {:?}, {:?}/{:?}", self.state.poly.size(), curr, self.state.var_domain.len());
-
             if let Some(flip_manager) = &mut self.flip_manager {
                 flip_manager.greedy_flip(&mut self.state.poly, self.state.var_domain.candidates());
             }
+
+            curr += 1;
+            debug!("Size: {:?}, {:?}/{:?}", self.state.poly.size(), curr, self.state.var_domain.len());
+
+            if let Some(size_limit) = self.size_limit {
+                if self.state.poly.size() > size_limit {
+                    return Err(format!("Size limit exceeded: {:?}", self.state.poly.size()));
+                }
+            }
+
             if let Some(stats) = self.stats.as_mut() {
                 stats.update_size(self.state.poly.size());
             }
         }
-        self.state.poly
+        Ok(self.state.poly)
     }
 }    

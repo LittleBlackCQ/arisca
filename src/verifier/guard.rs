@@ -1,11 +1,12 @@
 use crate::bipoly::{Polynomial, Term, VarId};
+
 use rug::Integer;
+use std::fmt::{Debug, Display, Formatter};
 
 pub struct SizeGuard {
     max_terms: usize,
 }
 
-#[derive(Debug)]
 pub struct SizeLimitExceeded {
     pub size: usize,
     pub limit: usize,
@@ -21,12 +22,25 @@ impl SizeGuard {
             Err(SizeLimitExceeded {
                 size,
                 limit: self.max_terms,
-            })
+                })
         } else {
             Ok(())
         }
     }
 }
+
+impl Debug for SizeLimitExceeded {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "{}", self)
+    }
+}
+impl Display for SizeLimitExceeded {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), std::fmt::Error> {
+        write!(f, "Size limit {} exceeded.", self.limit)
+    }
+}
+
+impl std::error::Error for SizeLimitExceeded {}
 
 impl Polynomial {
     pub fn insert_checked(&mut self, term: Term, coeff: Integer, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
@@ -68,16 +82,11 @@ impl Polynomial {
         Ok(())
     }
 
-    pub fn substitute_by_poly_checked(&mut self, v: &VarId, poly: &Polynomial, flipped: bool, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn substitute_by_poly_checked(&mut self, v: &VarId, poly: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
         let mut new_poly = Polynomial::new();
         self.terms.retain(|term, coeff| {
             if let Some(new_term) = term.remove_var(v) {
-                let term_poly = Polynomial::from_term(new_term, coeff.clone());
-                if flipped {
-                    new_poly += term_poly.clone() - (term_poly * poly);
-                } else {
-                    new_poly += term_poly * poly;
-                }
+                new_poly += Polynomial::from_term(new_term, coeff.clone()) * poly;
                 false
             } else {
                 true

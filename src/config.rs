@@ -26,13 +26,13 @@ pub struct Config {
     #[arg(long, help = "Whether the input spec is signed")]
     pub signed: bool,
 
-    #[arg(long, default_value_t = 0.1, help = "Maximum size ratio between the reduced polynomial size and the original size")] 
+    #[arg(long, default_value_t = 0.01, help = "Maximum size ratio between the reduced polynomial size and the original size")] 
     pub max_ratio: f64,
 
     #[arg(long, default_value_t = 5, help = "Abort if the size ratio between the reduced polynomial size and the original size is larger than this value")]
     pub abort_ratio: usize,
 
-    #[arg(long, default_value_t = 10000000, help = "Polynomial size limit")] 
+    #[arg(long, default_value_t = 1000000, help = "Polynomial size limit for main reduction")] 
     pub size_limit: usize,
 
     #[arg(long, default_value_t = false, help = "Enable dual variables")]

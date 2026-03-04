@@ -10,12 +10,16 @@ pub use stats::ReductionStats;
 use spec::ArithmeticSpec;
 use policy::{ReductionPolicy, ReductionAction, RandomPolicy, DefaultPolicy, LazyGreedyPolicy};
 use engine::ReductionEngine;
-use topo::{VarDomain, VecVar, TopoVar};
-use guard::{SizeGuard, SizeLimitExceeded};
+use topo::{TopoVar, VecVar, VarDomain, Domain};
+use guard::{SizeGuard};
 use flip::FlipManager;
-use crate::circuit::{Circuit, NetId, NodeId, Gate, Cone};
-use crate::bipoly::{Polynomial, VarId};
-use crate::config::{ReductionMode, Config};
+
+use crate::{
+    circuit::{Circuit, NetId, NodeId, Gate, Cone},
+    bipoly::{Polynomial, VarId},
+    config::{ReductionMode, Config},
+    Result
+};
 
 use std::collections::{HashMap, HashSet};
 use itertools::Itertools;
@@ -29,9 +33,11 @@ pub struct ReductionContext<'a> {
     pub poly_map: &'a HashMap<VarId, Polynomial>,
 }
 
+#[derive(Clone)]
 pub struct ReductionState {
     pub poly: Polynomial,
-    pub var_domain: Box<dyn VarDomain>,
+    pub var_domain: Domain,
+    pub flip_manager: Option<FlipManager>
 }
 
 // map half adder outputs to negative to make the reduction faster
@@ -120,24 +126,7 @@ pub fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynom
     poly_map
 }
 
-fn normalize(poly: &mut Polynomial, modulus: Option<&Integer>) {
-    if let Some(modulus) = modulus {
-        poly.mod_by_const(modulus);
-    }
-    poly.remove_mono_by(|m, _| {
-        for pair in m.vars().windows(2) {
-            let (var_i, var_j) = (pair[0], pair[1]);
-            if var_j >= 0 {
-                return false;
-            } else if (var_j - var_i) == 1 {
-                return true;
-            } 
-        }
-        false
-    });
-}
-
-fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Cone, bool)> {
+pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Cone, bool)> {
     let terminals: HashSet<NetId> = circuit.nets().iter().enumerate().filter_map(|(net_id, net)| {
         if let Some(driver) = net.driver() {
             if circuit.nodes_at(driver).is_multioutput() {
@@ -250,24 +239,19 @@ fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Cone, b
 }
 
 
-fn process_cone(
+pub fn process_cone(
     cone: &Cone,
     is_converging: bool,
     ctx: ReductionContext,
-    final_adj: &mut HashMap<VarId, Vec<VarId>>,
-) -> Result<Polynomial, String> {
+    cfg: &Config,
+) -> Result<ReductionState> {
     let root_var = ctx.vars[cone.root];
+    let poly = ctx.poly_map.get(&root_var).ok_or("Polynomial not found")?;
     
-    final_adj.insert(
-        root_var,
-        cone.inputs.iter().map(|&i| ctx.vars[i]).collect()
-    );
-
-    let poly = ctx.poly_map[&root_var].clone();
-    let state = if is_converging {
-        ReductionState {
-            poly,
-            var_domain: Box::new(
+    if is_converging {
+        let state = ReductionState {
+            poly: poly.clone(),
+            var_domain: Domain::Vec(
                 VecVar::new(
                     cone.nets[..cone.nets.len() - 1]
                         .iter()
@@ -275,7 +259,10 @@ fn process_cone(
                         .collect()
                 )
             ),
-        }
+            flip_manager: None
+        };
+        let engine = ReductionEngine::new(&ctx, state, None, None);
+        engine.run(&mut DefaultPolicy {})
     } else {
         let adj: HashMap<VarId, Vec<VarId>> =
             cone.nodes.iter().filter_map(|&n| {
@@ -286,20 +273,37 @@ fn process_cone(
                 Some((out, ins))
             }).collect();
 
-        ReductionState {
-            poly,
-            var_domain: Box::new(TopoVar::new(adj)),
-        }
-    };
-
-    let mut stats = ReductionStats::new();
-    let engine = ReductionEngine::new(&ctx, state, Some(&mut stats), false, None);
-    let ret = engine.run(&mut DefaultPolicy {})?;
-    debug!("Cone {:?}(converging: {:?}) poly size: {:?}, max size: {:?}", cone.root, is_converging, ret.size(), stats.max_size);
-    Ok(ret)
+        let state = ReductionState { 
+            poly: poly.clone(), 
+            var_domain: Domain::Vec(VecVar::new(TopoVar::new(adj.clone()).bfs())), 
+            flip_manager: None
+        };
+        let engine = ReductionEngine::new(&ctx, state, None, Some(cfg.size_limit));
+        engine.run(&mut DefaultPolicy {})
+            .or_else(|_| {
+                debug!("Bfs failed, try dfs.....");
+                let state = ReductionState { 
+                    poly: poly.clone(), 
+                    var_domain: Domain::Vec(VecVar::new(TopoVar::new(adj.clone()).dfs())), 
+                    flip_manager: None
+                };
+                let engine = ReductionEngine::new(&ctx, state, None, Some(cfg.size_limit));
+                engine.run(&mut DefaultPolicy {})
+            })
+            .or_else(|_| {
+                debug!("Dfs failed, try lazy greedy.....");
+                let state = ReductionState { 
+                    poly: poly.clone(), 
+                    var_domain: Domain::Topo(TopoVar::new(adj)), 
+                    flip_manager: None
+                };
+                let engine = ReductionEngine::new(&ctx, state, None, None);
+                engine.run(&mut LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio))
+            })
+    }
 }
 
-pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial, String> {
+pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial> { 
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
@@ -309,7 +313,13 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let mut final_adj: HashMap<i32, Vec<i32>> = HashMap::new();
 
     for (cone, is_converging) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
-        poly_map.insert(vars[cone.root], process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, &mut final_adj)?);
+        let state = process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, cfg)?;
+        debug!("Cone {:?} (Converging: {}): {} ", cone.root, is_converging, state.poly.size());
+        poly_map.insert(vars[cone.root], state.poly);
+        final_adj.insert(
+            vars[cone.root],
+            cone.inputs.iter().map(|&i| vars[i]).collect()
+        );
     }
 
     final_adj.extend(circuit.nodes().iter()
@@ -332,10 +342,10 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         poly_map: &poly_map,
     };
 
-    let main_vardomain: Box<dyn VarDomain> = match cfg.mode {
-        ReductionMode::BFS => Box::new(VecVar::new(TopoVar::new(final_adj).bfs())),
-        ReductionMode::DFS => Box::new(VecVar::new(TopoVar::new(final_adj).dfs())),
-        ReductionMode::Random | ReductionMode::Heuristic => Box::new(TopoVar::new(final_adj)),
+    let main_vardomain = match cfg.mode {
+        ReductionMode::BFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).bfs())),
+        ReductionMode::DFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).dfs())),
+        ReductionMode::Random | ReductionMode::Heuristic => Domain::Topo(TopoVar::new(final_adj)),
     };
 
     let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
@@ -347,9 +357,11 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let main_state = ReductionState {
         poly: spec.build_golden(circuit.inputs(), circuit.outputs(), &vars),
         var_domain: main_vardomain,
+        flip_manager: if cfg.flip { Some(FlipManager::new()) } else { None },
     };
     
     debug!("Start main reduction...");
-    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), cfg.flip, Some(cfg.size_limit));
-    engine.run(&mut *main_policy)
+    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), Some(cfg.size_limit));
+    let state = engine.run(&mut *main_policy)?;
+    Ok(state.poly)
 }

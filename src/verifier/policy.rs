@@ -1,4 +1,4 @@
-use super::{ReductionEngine, SizeGuard, SizeLimitExceeded, normalize};
+use super::{ReductionState, ReductionEngine, VarDomain, SizeGuard};
 use crate::bipoly::{Polynomial, VarId};
 
 use std::collections::HashMap;
@@ -7,7 +7,8 @@ use log::debug;
 
 pub enum ReductionAction {
     Reduce(VarId),
-    Replace(Polynomial, VarId),
+    Replace(ReductionState),
+    Skip,
     Stop
 }
 
@@ -47,46 +48,44 @@ pub struct LazyGreedyPolicy {
 impl ReductionPolicy for LazyGreedyPolicy {
     fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
         let candidates = engine.state.var_domain.candidates();
-        if candidates.len() == 0 {
+        if candidates.len() == 0 || engine.state.poly.size() == 0 {
             return ReductionAction::Stop;
         } else if candidates.len() == 1 {
             return ReductionAction::Reduce(candidates[0]);
         }
 
-        let candidates = self.sort_queue_by_occ_penalty(candidates, &engine.state.poly, engine.ctx.poly_map);
-        let current_size = engine.state.poly.size() as f64;
+        let candidates = self.sort_queue_by_occ_penalty(&candidates, &engine.state.poly, engine.ctx.poly_map);
+        let origin_state = engine.state.clone();
+        let current_size = engine.state.poly.size();
+        let mut best_candidate: Option<(f64, VarId, ReductionState)> = None;
 
-        let mut best_candidate: Option<(f64, (VarId, Polynomial))> = None;
-
-        let guard = SizeGuard::new(self.abort_ratio * engine.state.poly.size());
-        for &var in candidates.iter() { 
-            match self.try_reduce_var(var, &guard, engine) {
-                Ok(reduced_poly) => {
-                    let ratio = (reduced_poly.size() as f64 - current_size) / current_size;
-                    if ratio < self.max_ratio {
-                        debug!("Choose var: {:?}", var);
-                        return ReductionAction::Replace(reduced_poly, var);
-                    } else {
-                        let value = self.penalty.entry(var).or_insert(1);
-                        *value = value.saturating_mul(2);
-                        match best_candidate {
-                            None => best_candidate = Some((ratio, (var, reduced_poly))),
-                            Some((best_ratio, _)) => {
-                                if ratio < best_ratio {
-                                    best_candidate = Some((ratio, (var, reduced_poly)));
-                                }
-                            }
+        let guard = SizeGuard::new(self.abort_ratio * current_size);
+        for &var in &candidates { 
+            if let Err(err) = engine.reduce_var(var, Some(&guard)) {
+                debug!("Var: {:?} failed. Error: {:?}", var, err);
+                continue;
+            }
+            let ratio = (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
+            debug!("Try size: {:?}, ratio: {:.3}", engine.state.poly.size(), ratio);
+            if ratio < self.max_ratio {
+                return ReductionAction::Skip;
+            } else {
+                let value = self.penalty.entry(var).or_insert(1);
+                *value = value.saturating_mul(2);
+                match best_candidate {
+                    None => best_candidate = Some((ratio, var, engine.state.clone())),
+                    Some((best_ratio, _, _)) => {
+                        if ratio < best_ratio {
+                            best_candidate = Some((ratio, var, engine.state.clone()));
                         }
                     }
                 }
-                Err(e) => {
-                    debug!("Limit {:?} exceeded when reduce Var {:?}", e.limit, var);
-                }
+                engine.state = origin_state.clone();
             }
         }
-        if let Some((_, (var, reduced_poly))) = best_candidate {
+        if let Some((_, var, state)) = best_candidate {
             debug!("Choose var: {:?}", var);
-            return ReductionAction::Replace(reduced_poly, var);
+            return ReductionAction::Replace(state);
         } else {
             return ReductionAction::Reduce(candidates[0]);
         }
@@ -100,18 +99,6 @@ impl LazyGreedyPolicy {
             abort_ratio,
             penalty: HashMap::new(),
         }
-    }
-
-    fn try_reduce_var(&mut self, var: VarId, guard: &SizeGuard, engine: &mut ReductionEngine) -> Result<Polynomial, SizeLimitExceeded> {
-        let mut reduced_poly = engine.state.poly.clone();
-        let Some(gate_poly) = engine.ctx.poly_map.get(&var) else { return Ok(reduced_poly); };
-        debug!("Try reduce var: {:?}, size: {:?}", var, gate_poly.size());
-        reduced_poly.substitute_by_poly_checked(&var, &gate_poly, engine.is_flip(&var), guard)?;
-        normalize(&mut reduced_poly, engine.ctx.modulus);
-
-        debug!("Size: {:?} (try)", reduced_poly.size());
-
-        Ok(reduced_poly)
     }
 
     fn sort_queue_by_occ_penalty(&mut self, candidates: &[VarId], poly: &Polynomial, poly_map: &HashMap<VarId, Polynomial>) -> Vec<VarId> {

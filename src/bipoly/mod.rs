@@ -4,7 +4,7 @@ mod debug;
 
 pub use term::{VarId, Term};
 use rug::Integer;
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, btree_map::Entry, HashSet};
 
 #[derive(Clone, Default)]
 pub struct Polynomial {
@@ -56,6 +56,10 @@ impl Polynomial {
 
     pub fn terms(&self) -> &BTreeMap<Term, Integer> {
         &self.terms
+    }
+
+    pub fn vars(&self) -> Vec<VarId> {
+        self.terms.keys().flat_map(|t| t.vars.clone()).collect::<HashSet<_>>().into_iter().collect()
     }
 
     pub fn coeff_of(&self, term: &Term) -> Integer {
@@ -136,17 +140,11 @@ impl Polynomial {
         res
     }
 
-    pub fn substitute_by_poly(&mut self, v: &VarId, poly: &Polynomial, flipped: bool) {
+    pub fn substitute_by_poly(&mut self, v: &VarId, poly: &Polynomial) {
         let mut new_poly = Polynomial::new();
         self.terms.retain(|term, coeff| {
             if let Some(new_term) = term.remove_var(v) {
-                let term_poly = Polynomial::from_term(new_term, coeff.clone());
-                if flipped {
-                    new_poly += term_poly.clone() - (term_poly * poly);
-                } else {
-                    new_poly += term_poly * poly;
-                }
-                
+                new_poly += Polynomial::from_term(new_term, coeff.clone()) * poly;
                 false
             } else {
                 true
@@ -171,6 +169,11 @@ impl Polynomial {
         for (_, coeff) in self.terms.iter_mut() {
             *coeff = -std::mem::take(coeff);
         }
+    }
+
+    pub fn neg_self(&mut self) {
+        *self -= Polynomial::from_constant(Integer::from(1));
+        self.neg_coeff();
     }
 
     pub fn mod_by_const(&mut self, n: &Integer) {

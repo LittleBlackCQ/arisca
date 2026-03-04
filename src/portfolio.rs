@@ -4,6 +4,7 @@ use crate::{
     bipoly::Polynomial,
     circuit::Circuit,
     verifier::{ReductionStats, verify},
+    Result
 };
 
 use log::{error, info};
@@ -41,8 +42,8 @@ impl Portfolio {
                 }
             }
         };
-        add_config("--max-ratio 0.01 -r 9");
-        add_config("--max-ratio 0.01 -r 5");
+        add_config("-m heuristic -r 9");
+        add_config("-m heuristic -r 5");
         add_config("-m bfs -r 9");
         add_config("-m bfs -r 5");
         add_config("-m dfs -r 5");
@@ -53,7 +54,7 @@ impl Portfolio {
         }
     }
 
-    pub fn run(self, circuit: Arc<Circuit>) -> Result<(Polynomial, ReductionStats, String), String> {
+    pub fn run(self, circuit: Arc<Circuit>) -> Result<(Polynomial, ReductionStats, String)> {
         let total_workers = self.configs.len();
         if total_workers == 0 {
             return Err("No portfolio configurations available.".into());
@@ -95,7 +96,7 @@ impl Portfolio {
     }
 }
 
-pub fn portfolio_main(circuit: Circuit, cfg: Config, stats: &mut ReductionStats) -> Result<Polynomial, String> {
+pub fn portfolio_main(circuit: Circuit, cfg: Config, stats: &mut ReductionStats) -> Result<Polynomial> {
     info!("Starting portfolio...");
     let shared_circuit = Arc::new(circuit);
     let portfolio = Portfolio::new(cfg);

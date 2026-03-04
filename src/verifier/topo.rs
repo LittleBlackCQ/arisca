@@ -1,14 +1,17 @@
 use crate::bipoly::{VarId};
 
 use std::collections::{HashMap, VecDeque, HashSet};
+use std::sync::Arc;
 
 pub trait VarDomain {
     fn candidates(&self) -> &[VarId];
     fn update(&mut self, target: VarId);
     fn len(&self) -> usize;
 }
+
+#[derive(Clone)]
 pub struct TopoVar {
-    adj: HashMap<VarId, Vec<VarId>>,
+    adj: Arc<HashMap<VarId, Vec<VarId>>>,
     in_degree: HashMap<VarId, usize>,
     queue: Vec<VarId>,
 }
@@ -23,7 +26,7 @@ impl TopoVar {
             }
         }
         let queue = in_degree.iter().filter_map(|(v, &in_degree)| if in_degree == 0 { Some(*v) } else { None }).collect();
-        TopoVar { adj, in_degree, queue }
+        TopoVar { adj: Arc::new(adj), in_degree, queue }
     }
 
     pub fn bfs(&self) -> Vec<VarId> {
@@ -99,10 +102,11 @@ impl VarDomain for TopoVar {
     }
 
     fn len(&self) -> usize {
-        self.adj.len()
+        self.in_degree.len()
     }
 }
 
+#[derive(Clone)]
 pub struct VecVar {
     candidates: Vec<VarId>,
     len: usize,
@@ -125,5 +129,34 @@ impl VarDomain for VecVar {
 
     fn len(&self) -> usize {
         self.len
+    }
+}
+
+#[derive(Clone)]
+pub enum Domain {
+    Topo(TopoVar),
+    Vec(VecVar),
+}
+
+impl VarDomain for Domain {
+    fn candidates(&self) -> &[VarId] {
+        match self {
+            Domain::Topo(topo) => topo.candidates(),
+            Domain::Vec(vec) => vec.candidates(),
+        }
+    }
+
+    fn update(&mut self, target: VarId) {
+        match self {
+            Domain::Topo(topo) => topo.update(target),
+            Domain::Vec(vec) => vec.update(target),
+        }
+    }
+
+    fn len(&self) -> usize {
+        match self {
+            Domain::Topo(topo) => topo.len(),
+            Domain::Vec(vec) => vec.len(),
+        }
     }
 }

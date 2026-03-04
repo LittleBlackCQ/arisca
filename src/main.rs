@@ -6,9 +6,10 @@ use arisca::{
     verifier::{verify, ReductionStats},
     circuit::AdderExtractor,
     portfolio::portfolio_main,
+    Result
 };
 
-fn main() -> Result<(), String> {
+fn main() -> Result<()> {
     let cfg = Config::parse_args();
     init_logger(cfg.log_file.as_ref());
 

@@ -38,6 +38,9 @@ pub struct Config {
     #[arg(long, default_value_t = false, help = "Enable dual variables")]
     pub flip: bool,
 
+    #[arg(long, default_value_t = false, help = "Whether to delay the reduction of cone polynomial during the main reduction")]
+    pub delay: bool,
+
     #[arg(long, default_value_t = false, help = "Enable portfolio mode")]
     pub portfolio: bool,
 

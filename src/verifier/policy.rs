@@ -1,4 +1,4 @@
-use super::{ReductionState, ReductionEngine, VarDomain, SizeGuard};
+use super::{ReductionState, ReductionEngine, VarDomain, SizeGuard, Substitution};
 use crate::bipoly::{Polynomial, VarId};
 
 use std::collections::HashMap;
@@ -54,7 +54,7 @@ impl ReductionPolicy for LazyGreedyPolicy {
             return ReductionAction::Reduce(candidates[0]);
         }
 
-        let candidates = self.sort_queue_by_occ_penalty(&candidates, &engine.state.poly, engine.ctx.poly_map);
+        let candidates = self.sort_queue_by_occ_penalty(&candidates, &engine.state.poly, &engine.ctx.substitutions);
         let origin_state = engine.state.clone();
         let current_size = engine.state.poly.size();
         let mut best_candidate: Option<(f64, VarId, ReductionState)> = None;
@@ -63,11 +63,13 @@ impl ReductionPolicy for LazyGreedyPolicy {
         for &var in &candidates { 
             if let Err(err) = engine.reduce_var(var, Some(&guard)) {
                 debug!("Var: {:?} failed. Error: {:?}", var, err);
+                engine.state = origin_state.clone();
                 continue;
             }
             let ratio = (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
             debug!("Try size: {:?}, ratio: {:.3}", engine.state.poly.size(), ratio);
             if ratio < self.max_ratio {
+                debug!("Choose var: {:?}", var);
                 return ReductionAction::Skip;
             } else {
                 let value = self.penalty.entry(var).or_insert(1);
@@ -101,7 +103,7 @@ impl LazyGreedyPolicy {
         }
     }
 
-    fn sort_queue_by_occ_penalty(&mut self, candidates: &[VarId], poly: &Polynomial, poly_map: &HashMap<VarId, Polynomial>) -> Vec<VarId> {
+    fn sort_queue_by_occ_penalty(&mut self, candidates: &[VarId], poly: &Polynomial, substitutions: &HashMap<VarId, Substitution>) -> Vec<VarId> {
         let mut stats: Vec<(_, u32)> = candidates.iter().map(|&v| (v, 0)).collect();
         stats.sort_by_key(|(v, _)| *v);
 
@@ -135,9 +137,8 @@ impl LazyGreedyPolicy {
         }
 
         stats.sort_by_key(|(v, count)| {
-            count * 
-            poly_map.get(v).unwrap_or(&Polynomial::new()).size() as u32 *
-            *self.penalty.entry(*v).or_insert(1)
+            let sub_size = substitutions.get(v).map(|s| s.size()).unwrap_or(0) as u32;
+            count * sub_size * *self.penalty.entry(*v).or_insert(1)
         });
         stats.into_iter().map(|(v, _)| v).collect()
     }

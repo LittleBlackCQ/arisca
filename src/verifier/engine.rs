@@ -1,6 +1,6 @@
 
-use super::{ReductionPolicy, ReductionContext, ReductionAction, ReductionState, ReductionStats, VarDomain, SizeGuard};
-use crate::bipoly::{VarId};
+use super::{ReductionPolicy, ReductionContext, ReductionAction, ReductionState, ReductionStats, VarDomain, SizeGuard, process_cone, Substitution};
+use crate::bipoly::{Polynomial, VarId};
 use crate::Result;
 
 use log::debug;
@@ -18,7 +18,7 @@ impl<'a> ReductionEngine<'a> {
         Self { ctx, state, stats, size_limit }
     }
 
-    pub fn normalize(&mut self) {
+    fn normalize(&mut self) {
         if let Some(modulus) = self.ctx.modulus {
             self.state.poly.mod_by_const(modulus);
         }
@@ -35,16 +35,13 @@ impl<'a> ReductionEngine<'a> {
         });
     }
 
-    pub fn reduce_var(&mut self, var: VarId, guard: Option<&SizeGuard>) -> Result<()> {
-        self.state.var_domain.update(var);
-        let Some(gate_poly) = self.ctx.poly_map.get(&var) else { return Ok(()); };
+    fn apply_reduction(&mut self, var: VarId, gate_poly: Polynomial, guard: Option<&SizeGuard>) -> Result<()> {
         debug!("Reduce var: {:?}, size: {:?}", var, gate_poly.size());
-
         let new_vars = gate_poly.vars();
-        let gate_poly = if let Some(flip_manager) = &self.state.flip_manager {
-            flip_manager.normalize(&var, &new_vars, gate_poly)
+        let gate_poly = if let Some(fm) = &self.state.flip_manager {
+            fm.normalize(&var, &new_vars, &gate_poly)
         } else {
-            gate_poly.clone()
+            gate_poly
         };
 
         if let Some(guard) = guard {
@@ -52,11 +49,33 @@ impl<'a> ReductionEngine<'a> {
         } else {
             self.state.poly.substitute_by_poly(&var, &gate_poly);
         }
+
         self.normalize();
         
-        if let Some(flip_manager) = &mut self.state.flip_manager {
-            flip_manager.greedy_flip(&mut self.state.poly, &new_vars);
+        if let Some(fm) = &mut self.state.flip_manager {
+            fm.greedy_flip(&mut self.state.poly, &new_vars);
         }
+        Ok(())
+    }
+
+    fn resolve_substitution(&mut self, var: VarId, guard: Option<&SizeGuard>) -> Result<Option<Polynomial>> {
+        match self.ctx.substitutions.get(&var) {
+            Some(Substitution::Poly(p)) => Ok(Some(p.clone())),
+            Some(Substitution::Cone(cone, is_conv, base_poly)) => {
+                self.apply_reduction(var, base_poly.clone(), guard)?;
+                let new_poly = process_cone(cone, self.state.poly.clone(), *is_conv, self.ctx, self.state.flip_manager.as_mut())?;
+                self.state.poly = new_poly;
+                Ok(None)
+            }
+            None => Ok(None),
+        }
+    }
+
+    pub fn reduce_var(&mut self, var: VarId, guard: Option<&SizeGuard>) -> Result<()> {
+        self.state.var_domain.update(var);
+        if let Some(gate_poly) = self.resolve_substitution(var, guard)? {
+            self.apply_reduction(var, gate_poly, guard)?;
+        };
         Ok(())
     }
 

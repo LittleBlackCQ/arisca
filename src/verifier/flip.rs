@@ -21,7 +21,7 @@ impl FlipManager {
 
     pub fn greedy_flip(&mut self, poly: &mut Polynomial, vars: &[VarId]) {
         for v in vars {
-            if !self.flipped_vars.contains(v) {
+            if !self.flipped_vars.contains(v) && *v > 0 {
                 let origin_poly = poly.clone();
                 poly.neg_var(v);
 

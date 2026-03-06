@@ -7,7 +7,7 @@ use crate::{
     Result
 };
 
-use log::{error, info};
+use log::{info};
 use std::{
     ffi::{OsString},
     sync::{Arc, mpsc},
@@ -19,34 +19,39 @@ pub struct Portfolio {
 }
 
 impl Portfolio {
-    pub fn new(cfg: Config) -> Self {
+    pub fn new(_cfg: Config) -> Self {
         let mut configs = Vec::new();
         let mut id = 0;
+
+        info!("Base args: {:?}", std::env::args().skip(2).collect::<Vec<String>>().join(" "));
+        let base_args: Vec<OsString> = std::env::args_os().collect();
         let mut add_config = |args: &str| {
             let worker_name = format!("Worker{id}");
             info!("{} with args: {:?}", worker_name, args);
             id += 1;
-            let mut arg_vec: Vec<OsString> = vec![
-                "arisca".into(),
-                cfg.path.clone().into()
-            ];
+            let mut arg_vec: Vec<OsString> = base_args.clone();
             for arg in args.split_whitespace() {
                 arg_vec.push(arg.into());
             }
             match Config::try_parse_from(arg_vec) {
-                Ok(cfg) => {
+                Ok(mut cfg) => {
+                    cfg.portfolio = false;
                     configs.push((worker_name, cfg));
                 }
                 Err(e) => {
-                    error!("Error parsing arguments {}: {}", args, e);
+                    e.exit();
                 }
             }
         };
         add_config("-m heuristic -r 9");
-        add_config("-m heuristic -r 5");
-        add_config("-m bfs -r 9");
-        add_config("-m bfs -r 5");
-        add_config("-m dfs -r 5");
+        add_config("-m heuristic");
+        add_config("-m heuristic --flip");
+        add_config("-m heuristic --flip -r 10");
+        add_config("-m heuristic --max-ratio 0.1 --flip -r 10");
+        add_config("-m bfs");
+        add_config("-m dfs");
+        add_config("-m heuristic -r 10 --delay");
+        add_config("-m heuristic -r 10 --delay --flip");
 
         Self {
             // base_config: cfg,

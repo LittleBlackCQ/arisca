@@ -26,11 +26,26 @@ use itertools::Itertools;
 use rug::Integer;
 use log::debug;
 
+pub enum Substitution {
+    Poly(Polynomial),
+    Cone(Cone, bool, Polynomial),
+}
+
+impl Substitution {
+    pub fn size(&self) -> usize {
+        match self {
+            Substitution::Poly(p) => p.size(),
+            Substitution::Cone(_, _, p) => p.size(),
+        }
+    }
+}
+
 pub struct ReductionContext<'a> {
     pub circuit: &'a Circuit,
+    pub cfg: &'a Config,
     pub vars: &'a [VarId],
     pub modulus: Option<&'a Integer>,
-    pub poly_map: &'a HashMap<VarId, Polynomial>,
+    pub substitutions: HashMap<VarId, Substitution>
 }
 
 #[derive(Clone)]
@@ -178,7 +193,7 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
                 }
             }
 
-            let is_converging = final_inputs
+            let is_conv = final_inputs
                 .iter()
                 .map(|&input| vars[input])
                 .sorted()
@@ -186,7 +201,7 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
                 .filter(|&(a, b)| b < 0 && (b - a) == 1)
                 .count() * 20 > final_inputs.len() * sensitivity as usize; // sensitivity: 0-10
 
-            if is_converging {
+            if is_conv {
                 fn get_depth(
                     net: NetId, 
                     circuit: &Circuit, 
@@ -238,92 +253,90 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
     }).collect()
 }
 
+fn build_cone_adj(cone: &Cone, ctx: &ReductionContext) -> HashMap<VarId, Vec<VarId>> {
+    cone.nodes.iter().filter_map(|&n| {
+        let node = ctx.circuit.nodes_at(n);
+        if node.outputs()[0] == cone.root { return None }
+        let out = ctx.vars[node.outputs()[0]];
+        let ins = node.inputs().iter().filter(|l| !cone.inputs.contains(&l.net())).map(|l| ctx.vars[l.net()]).collect();
+        Some((out, ins))
+    }).collect()
+}
 
 pub fn process_cone(
     cone: &Cone,
-    is_converging: bool,
-    ctx: ReductionContext,
-    cfg: &Config,
-) -> Result<ReductionState> {
-    let root_var = ctx.vars[cone.root];
-    let poly = ctx.poly_map.get(&root_var).ok_or("Polynomial not found")?;
-    
-    if is_converging {
+    poly: Polynomial,
+    is_conv: bool,
+    ctx: &ReductionContext,
+    external_flip: Option<&mut FlipManager>
+) -> Result<Polynomial> {
+    let run_sub = |p: Polynomial, dom: Domain, limit: usize, policy: &mut dyn ReductionPolicy| -> Result<ReductionState> {
         let state = ReductionState {
-            poly: poly.clone(),
-            var_domain: Domain::Vec(
-                VecVar::new(
-                    cone.nets[..cone.nets.len() - 1]
-                        .iter()
-                        .map(|&n| ctx.vars[n])
-                        .collect()
-                )
-            ),
-            flip_manager: None
+            poly: p,
+            var_domain: dom,
+            flip_manager: external_flip.as_ref().map(|f| (*f).clone()),
         };
-        let engine = ReductionEngine::new(&ctx, state, None, None);
-        engine.run(&mut DefaultPolicy {})
+        let engine = ReductionEngine::new(ctx, state, None, Some(limit));
+        engine.run(policy)
+    };
+    let state = if is_conv {
+        let domain = Domain::Vec(VecVar::new(cone.nets[..cone.nets.len()-1].iter().map(|&n| ctx.vars[n]).collect()));
+        run_sub(poly, domain, ctx.cfg.size_limit * 10, &mut DefaultPolicy {})?
     } else {
-        let adj: HashMap<VarId, Vec<VarId>> =
-            cone.nodes.iter().filter_map(|&n| {
-                let node = ctx.circuit.nodes_at(n);
-                if node.outputs()[0] == cone.root { return None }
-                let out = ctx.vars[node.outputs()[0]];
-                let ins = node.inputs().iter().filter(|l| !cone.inputs.contains(&l.net())).map(|l| ctx.vars[l.net()]).collect();
-                Some((out, ins))
-            }).collect();
-
-        let state = ReductionState { 
-            poly: poly.clone(), 
-            var_domain: Domain::Vec(VecVar::new(TopoVar::new(adj.clone()).bfs())), 
-            flip_manager: None
-        };
-        let engine = ReductionEngine::new(&ctx, state, None, Some(cfg.size_limit));
-        engine.run(&mut DefaultPolicy {})
+        let adj = build_cone_adj(cone, ctx);
+        let topo = TopoVar::new(adj);
+        run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.bfs())), ctx.cfg.size_limit, &mut DefaultPolicy {})
             .or_else(|_| {
-                debug!("Bfs failed, try dfs.....");
-                let state = ReductionState { 
-                    poly: poly.clone(), 
-                    var_domain: Domain::Vec(VecVar::new(TopoVar::new(adj.clone()).dfs())), 
-                    flip_manager: None
-                };
-                let engine = ReductionEngine::new(&ctx, state, None, Some(cfg.size_limit));
-                engine.run(&mut DefaultPolicy {})
+                debug!("Bfs failed, trying Dfs");
+                run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.dfs())), ctx.cfg.size_limit, &mut DefaultPolicy {})
             })
             .or_else(|_| {
-                debug!("Dfs failed, try lazy greedy.....");
-                let state = ReductionState { 
-                    poly: poly.clone(), 
-                    var_domain: Domain::Topo(TopoVar::new(adj)), 
-                    flip_manager: None
-                };
-                let engine = ReductionEngine::new(&ctx, state, None, None);
-                engine.run(&mut LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio))
-            })
+                debug!("Dfs failed, trying Greedy");
+                run_sub(poly, Domain::Topo(topo), ctx.cfg.size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
+            })?
+    };
+    if let (Some(ext), Some(sub_fm)) = (external_flip, state.flip_manager) {
+        ext.update(&sub_fm);
     }
+    debug!("Cone {:?} (Converging: {}): {} ", cone.root, is_conv, state.poly.size());
+    Ok(state.poly)
 }
 
 pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial> { 
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
-    let mut poly_map = init_poly_map(circuit, &vars);
     let modulus = spec.modulus(circuit.outputs());
+    let mut substitutions = HashMap::new();
+    for (v, p) in init_poly_map(circuit, &vars) {
+        substitutions.insert(v, Substitution::Poly(p));
+    }
 
     let mut final_adj: HashMap<i32, Vec<i32>> = HashMap::new();
 
-    for (cone, is_converging) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
-        let state = process_cone(&cone, is_converging, ReductionContext { circuit, vars: &vars, modulus: modulus.as_ref(), poly_map: &poly_map }, cfg)?;
-        debug!("Cone {:?} (Converging: {}): {} ", cone.root, is_converging, state.poly.size());
-        poly_map.insert(vars[cone.root], state.poly);
-        final_adj.insert(
-            vars[cone.root],
-            cone.inputs.iter().map(|&i| vars[i]).collect()
-        );
+    let mut main_ctx = ReductionContext {
+        circuit, cfg, vars: &vars, modulus: modulus.as_ref(),
+        substitutions, 
+    };
+
+    for (cone, is_conv) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
+        let root_var = vars[cone.root];
+        final_adj.insert(root_var, cone.inputs.iter().map(|i| vars[*i]).collect());
+        if cfg.delay {
+            if let Some(Substitution::Poly(base_p)) = main_ctx.substitutions.get(&root_var) {
+                let base_p = base_p.clone();
+                main_ctx.substitutions.insert(root_var, Substitution::Cone(cone, is_conv, base_p));
+            }
+        } else {
+            if let Some(Substitution::Poly(base_p)) = main_ctx.substitutions.remove(&root_var) {
+                let optimized = process_cone(&cone, base_p, is_conv, &main_ctx, None)?;
+                main_ctx.substitutions.insert(root_var, Substitution::Poly(optimized));
+            }
+        }
     }
 
     final_adj.extend(circuit.nodes().iter()
-        .filter(|n| n.outputs().len() != 1) 
+        .filter(|n| n.outputs().len() > 1) 
         .flat_map(|n| {
             let inputs: Vec<VarId> = n.inputs().iter().map(|l| vars[l.net()]).collect();
             
@@ -335,17 +348,16 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
             })
         }));
 
-    let main_ctx = ReductionContext {
-        circuit,
-        vars: &vars,
-        modulus: modulus.as_ref(),
-        poly_map: &poly_map,
-    };
+    debug!("Start main reduction...");
 
-    let main_vardomain = match cfg.mode {
-        ReductionMode::BFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).bfs())),
-        ReductionMode::DFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).dfs())),
-        ReductionMode::Random | ReductionMode::Heuristic => Domain::Topo(TopoVar::new(final_adj)),
+    let main_state = ReductionState {
+        poly: spec.build_golden(circuit.inputs(), circuit.outputs(), &vars),
+        var_domain: match cfg.mode {
+            ReductionMode::BFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).bfs())),
+            ReductionMode::DFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).dfs())),
+            ReductionMode::Random | ReductionMode::Heuristic => Domain::Topo(TopoVar::new(final_adj)),
+        },
+        flip_manager: if cfg.flip { Some(FlipManager::new()) } else { None },
     };
 
     let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
@@ -353,14 +365,6 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         ReductionMode::Random => Box::new(RandomPolicy {}),
         ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)),
     };
-
-    let main_state = ReductionState {
-        poly: spec.build_golden(circuit.inputs(), circuit.outputs(), &vars),
-        var_domain: main_vardomain,
-        flip_manager: if cfg.flip { Some(FlipManager::new()) } else { None },
-    };
-    
-    debug!("Start main reduction...");
     let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), Some(cfg.size_limit));
     let state = engine.run(&mut *main_policy)?;
     Ok(state.poly)

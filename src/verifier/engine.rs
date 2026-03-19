@@ -63,7 +63,7 @@ impl<'a> ReductionEngine<'a> {
             Some(Substitution::Poly(p)) => Ok(Some(p.clone())),
             Some(Substitution::Cone(cone, is_conv, base_poly)) => {
                 self.apply_reduction(var, base_poly.clone(), guard)?;
-                let new_poly = process_cone(cone, self.state.poly.clone(), *is_conv, self.ctx, self.state.flip_manager.as_mut())?;
+                let new_poly = process_cone(cone, self.state.poly.clone(), *is_conv, self.ctx, None, self.state.flip_manager.as_mut())?;
                 self.state.poly = new_poly;
                 Ok(None)
             }

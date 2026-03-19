@@ -21,8 +21,8 @@ struct Config {
     #[arg(value_name = "AIG_FILE")]
     path: PathBuf,
 
-    #[arg(short = 'e', long = "extract", value_enum)]
-    extract_mode: Option<ExtractMode>,
+    #[arg(short = 'e', long = "extract", value_enum, use_value_delimiter = true, help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3)")]
+    extract: Option<Vec<ExtractMode>>,
 
     #[arg(short, long, value_name = "DOT_FILE")]
     dot_file: Option<PathBuf>,
@@ -36,22 +36,27 @@ fn main() -> Result<(), String>{
     let args = Config::parse();
     
     let mut circuit = AigerParser::from_aig(args.path)?;
-    if let Some(mode) = args.extract_mode {
-        match mode {
-            ExtractMode::Adder => {
-                circuit = AdderExtractor::run(&circuit);
-            },
-            ExtractMode::Xor => {
-                circuit = GenericExtractor::run(&circuit, XorExtractor);
-            },
-            ExtractMode::Maj => {
-                circuit = GenericExtractor::run(&circuit, MajExtractor)
-            },
-            ExtractMode::Xor3 => {
-                circuit = GenericExtractor::run(&circuit, Xor3Extractor)
+    
+    // Handle extraction chain (supports single or multiple strategies)
+    if let Some(chain) = args.extract {
+        for mode in chain {
+            match mode {
+                ExtractMode::Adder => {
+                    circuit = AdderExtractor::run(&circuit);
+                },
+                ExtractMode::Xor => {
+                    circuit = GenericExtractor::run(&circuit, XorExtractor);
+                },
+                ExtractMode::Maj => {
+                    circuit = GenericExtractor::run(&circuit, MajExtractor)
+                },
+                ExtractMode::Xor3 => {
+                    circuit = GenericExtractor::run(&circuit, Xor3Extractor)
+                }
             }
         }
     }
+    
     if let Some(dot_file) = args.dot_file {
         circuit.to_dot(&dot_file, None);
         log::info!("DOT file written to: {:?}", dot_file);

@@ -11,6 +11,14 @@ pub enum ReductionMode {
     Heuristic,
 }
 
+#[derive(Clone, Debug, ValueEnum)]
+pub enum ExtractMode {
+    Adder,
+    Xor,
+    Maj,
+    Xor3,
+}
+
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 pub struct Config {
@@ -49,6 +57,9 @@ pub struct Config {
 
     #[arg(short = 'r', value_parser = value_parser!(u8).range(0..=10), default_value_t = 5, help = "Sensitity to identify converging cones based on the ratio of half adders")]
     pub revsca_sensitivity: u8,
+
+    #[arg(short = 'e', long = "extract", value_enum, use_value_delimiter = true, default_values_t = vec![ExtractMode::Adder], help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3). Default: adder")]
+    pub extract: Vec<ExtractMode>,
 }
 
 impl Config {

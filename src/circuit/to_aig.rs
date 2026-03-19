@@ -54,6 +54,24 @@ impl ToAig for Circuit {
                     let out = add_and(t1 ^ 1, t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
                     net_to_lit[node.outputs()[0]] = out;
                 }
+                Gate::Xor3 => { 
+                    // a ^ b ^ c = (a ^ b) ^ c
+                    let a = get_lit(&node.inputs()[0], &net_to_lit);
+                    let b = get_lit(&node.inputs()[1], &net_to_lit);
+                    let c = get_lit(&node.inputs()[2], &net_to_lit);
+                    
+                    // First compute a ^ b
+                    let ab_t1 = add_and(a ^ 1, b, &mut and_gates, &mut next_var);
+                    let ab_t2 = add_and(a, b ^ 1, &mut and_gates, &mut next_var);
+                    let ab_xor = add_and(ab_t1 ^ 1, ab_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
+                    
+                    // Then compute (a ^ b) ^ c
+                    let abc_t1 = add_and(ab_xor ^ 1, c, &mut and_gates, &mut next_var);
+                    let abc_t2 = add_and(ab_xor, c ^ 1, &mut and_gates, &mut next_var);
+                    let out = add_and(abc_t1 ^ 1, abc_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
+                    
+                    net_to_lit[node.outputs()[0]] = out;
+                }
                 Gate::Maj => {
                     // Maj(a, b, c) = (a&b) | (b&c) | (a&c)
                     let a = get_lit(&node.inputs()[0], &net_to_lit);
@@ -103,7 +121,6 @@ impl ToAig for Circuit {
                     net_to_lit[node.outputs()[0]] = cout;
                     net_to_lit[node.outputs()[1]] = sum;
                 }
-                _ => unimplemented!("Gate type not yet supported in AIG conversion"),
             }
         }
 

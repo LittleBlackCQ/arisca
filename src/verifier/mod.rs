@@ -268,6 +268,7 @@ pub fn process_cone(
     poly: Polynomial,
     is_conv: bool,
     ctx: &ReductionContext,
+    size_limit: Option<usize>,
     external_flip: Option<&mut FlipManager>
 ) -> Result<Polynomial> {
     let run_sub = |p: Polynomial, dom: Domain, limit: usize, policy: &mut dyn ReductionPolicy| -> Result<ReductionState> {
@@ -279,20 +280,21 @@ pub fn process_cone(
         let engine = ReductionEngine::new(ctx, state, None, Some(limit));
         engine.run(policy)
     };
+    let size_limit = size_limit.unwrap_or(poly.size());
     let state = if is_conv {
         let domain = Domain::Vec(VecVar::new(cone.nets[..cone.nets.len()-1].iter().map(|&n| ctx.vars[n]).collect()));
-        run_sub(poly, domain, ctx.cfg.size_limit * 10, &mut DefaultPolicy {})?
+        run_sub(poly, domain, size_limit * 10, &mut DefaultPolicy {})?
     } else {
         let adj = build_cone_adj(cone, ctx);
         let topo = TopoVar::new(adj);
-        run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.bfs())), ctx.cfg.size_limit, &mut DefaultPolicy {})
+        run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.bfs())), size_limit, &mut DefaultPolicy {})
             .or_else(|_| {
                 debug!("Bfs failed, trying Dfs");
-                run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.dfs())), ctx.cfg.size_limit, &mut DefaultPolicy {})
+                run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.dfs())), size_limit, &mut DefaultPolicy {})
             })
             .or_else(|_| {
                 debug!("Dfs failed, trying Greedy");
-                run_sub(poly, Domain::Topo(topo), ctx.cfg.size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
+                run_sub(poly, Domain::Topo(topo), size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
             })?
     };
     if let (Some(ext), Some(sub_fm)) = (external_flip, state.flip_manager) {
@@ -329,7 +331,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
             }
         } else {
             if let Some(Substitution::Poly(base_p)) = main_ctx.substitutions.remove(&root_var) {
-                let optimized = process_cone(&cone, base_p, is_conv, &main_ctx, None)?;
+                let optimized = process_cone(&cone, base_p, is_conv, &main_ctx, Some(cfg.size_limit), None)?;
                 main_ctx.substitutions.insert(root_var, Substitution::Poly(optimized));
             }
         }

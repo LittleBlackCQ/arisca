@@ -50,11 +50,6 @@ impl CutEnumerator {
     }
 
     pub fn run(&self, circuit: &Circuit) -> CutDb {
-        assert!(
-            !circuit.is_multioutput(),
-            "Cut enumeration requires single-output gates"
-        );
-
         let net_num = circuit.nets().len();
         let mut cuts: Vec<Vec<Cut>> = vec![Vec::new(); net_num];
 
@@ -65,8 +60,13 @@ impl CutEnumerator {
                 continue;
             }
 
-            if let Some(node) = circuit.nets_at(net).driver() {
-                let inputs = circuit.nodes_at(node).inputs();
+            if let Some(node_id) = circuit.nets_at(net).driver() {
+                let node = circuit.nodes_at(node_id);
+                if node.outputs().len() > 1 {
+                    cuts[net].push(Self::singleton_cut(net));
+                    continue;
+                }
+                let inputs = node.inputs();
                 
                 if inputs.is_empty() {
                     cuts[net].push(Cut::new());

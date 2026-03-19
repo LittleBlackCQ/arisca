@@ -91,9 +91,11 @@ impl GenericExtractor {
                         NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
                     })
                     .collect();
-                let out = new_circuit.add_gate(node.gate().clone(), inputs)[0];
-                net_map.insert(*net_id, out);
-                out
+                let outs = new_circuit.add_gate(node.gate().clone(), inputs);
+                for (&origin, &mapped) in node.outputs().iter().zip(outs.iter()) {
+                    net_map.insert(origin, mapped);
+                };
+                net_map[net_id]
             }
         }
 
@@ -345,9 +347,11 @@ impl AdderExtractor {
                     }
                 }
 
-                let out = new_circuit.add_gate(node.gate().clone(), inputs)[0];
-                net_map.insert(*net_id, out);
-                out
+                let outs = new_circuit.add_gate(node.gate().clone(), inputs);
+                for (&origin, &mapped) in node.outputs().iter().zip(outs.iter()) {
+                    net_map.insert(origin, mapped);
+                };
+                net_map[net_id]
             }
         }
 
@@ -940,6 +944,127 @@ mod tests {
 
         assert_eq!(new_circuit.nodes().len(), 2);
         assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+    }
+
+    #[test]
+    fn test_successive_extraction() {
+        let mut circuit = Circuit::empty();
+        let a = circuit.add_input();
+        let b = circuit.add_input();
+        let c = circuit.add_input();
+        let d = circuit.add_input();
+        let e = circuit.add_input();
+        let f = circuit.add_input();
+
+        // Step 1: Create a Half Adder (HA) structure that can be recognized
+        // HA Sum = a XOR b
+        let ha_sum = circuit.add_gate(Gate::Xor, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+        ])[0];
+        
+        // HA Carry = a AND b  
+        let ha_carry = circuit.add_gate(Gate::And, vec![
+            NetLit::new(a, false),
+            NetLit::new(b, false),
+        ])[0];
+
+        // Step 2: Create separate XOR3 structure using AND/OR gates (not forming FA)
+        // Build XOR3(c, d, e) = (c XOR d) XOR e
+        // First: c XOR d using AND/OR implementation
+        let cd_and1 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(c, false),
+            NetLit::new(d, true),
+        ])[0];
+        let cd_and2 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(c, true),
+            NetLit::new(d, false),
+        ])[0];
+        let cd_xor = circuit.add_gate(Gate::Or, vec![
+            NetLit::new(cd_and1, false),
+            NetLit::new(cd_and2, false),
+        ])[0];
+        
+        // Then: (c XOR d) XOR e
+        let cdxe_and1 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(cd_xor, false),
+            NetLit::new(e, true),
+        ])[0];
+        let cdxe_and2 = circuit.add_gate(Gate::And, vec![
+            NetLit::new(cd_xor, true),
+            NetLit::new(e, false),
+        ])[0];
+        let xor3_out = circuit.add_gate(Gate::Or, vec![
+            NetLit::new(cdxe_and1, false),
+            NetLit::new(cdxe_and2, false),
+        ])[0];
+
+        // Step 3: Create separate MAJ structure using AND/OR gates (not forming FA)
+        // Build MAJ(c, d, e) = (c & d) | (c & e) | (d & e)
+        let cf_maj = circuit.add_gate(Gate::And, vec![
+            NetLit::new(c, false),
+            NetLit::new(f, false),
+        ])[0];
+        let ce_maj = circuit.add_gate(Gate::And, vec![
+            NetLit::new(c, false),
+            NetLit::new(e, false),
+        ])[0];
+        let fe_maj = circuit.add_gate(Gate::And, vec![
+            NetLit::new(f, false),
+            NetLit::new(e, false),
+        ])[0];
+        let cf_ce_or = circuit.add_gate(Gate::Or, vec![
+            NetLit::new(cf_maj, false),
+            NetLit::new(ce_maj, false),
+        ])[0];
+        let maj_out = circuit.add_gate(Gate::Or, vec![
+            NetLit::new(cf_ce_or, false),
+            NetLit::new(fe_maj, false),
+        ])[0];
+
+        // Set outputs
+        circuit.set_output(ha_sum, false);
+        circuit.set_output(ha_carry, false);
+        circuit.set_output(xor3_out, false);
+        circuit.set_output(maj_out, false);
+
+        // Verify original circuit functionality
+        let original_tt = Simulator::compute_tt(&circuit);
+
+        // Step 4: Apply AdderExtractor first - should recognize the Half Adder
+        let after_adder = AdderExtractor::run(&circuit);
+        assert_eq!(after_adder.nodes().iter().filter(|n| *n.gate() == Gate::HalfAdder).count(), 1);
+        assert_eq!(Simulator::compute_tt(&after_adder), original_tt);
+
+        // Step 5: Apply XorExtractor - should extract XOR gates from the remaining structures
+        let after_xor = GenericExtractor::run(&after_adder, XorExtractor);
+        let xor_count = after_xor.nodes().iter().filter(|n| *n.gate() == Gate::Xor).count();
+        // Should have extracted at least 2 XOR gates (from the XOR3 structure breakdown)
+        assert_eq!(xor_count, 2);
+        assert_eq!(Simulator::compute_tt(&after_xor), original_tt);
+
+        // Step 6: Apply Xor3Extractor - should extract one XOR3 gate
+        let after_xor3 = GenericExtractor::run(&after_xor, Xor3Extractor);
+        let xor3_count = after_xor3.nodes().iter().filter(|n| *n.gate() == Gate::Xor3).count();
+        assert_eq!(xor3_count, 1);
+        assert_eq!(Simulator::compute_tt(&after_xor3), original_tt);
+
+        // Step 7: Apply MajExtractor - should extract one MAJ gate
+        let final_circuit = GenericExtractor::run(&after_xor3, MajExtractor);
+        let maj_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Maj).count();
+        assert_eq!(maj_count, 1);
+        
+        // Final verification
+        assert_eq!(Simulator::compute_tt(&final_circuit), original_tt);
+        
+        // Count all high-level gates
+        let ha_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::HalfAdder).count();
+        let xor3_final_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Xor3).count();
+        let maj_final_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Maj).count();
+        
+        assert_eq!(ha_count, 1);
+        assert_eq!(xor3_final_count, 1);
+        assert_eq!(maj_final_count, 1);
     }
 
     #[test]

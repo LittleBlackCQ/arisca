@@ -7,7 +7,7 @@ pub mod sim;
 mod to_aig;
 
 pub use basics::{Node, Net, NetId, NodeId, NetLit, Cone};
-pub use extractor::AdderExtractor;
+pub use extractor::{AdderExtractor, GenericExtractor, XorExtractor, Xor3Extractor, MajExtractor};
 pub use gate::Gate;
 
 pub struct Circuit {

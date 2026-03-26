@@ -52,6 +52,9 @@ pub struct Config {
     #[arg(long, default_value_t = false, help = "Enable portfolio mode")]
     pub portfolio: bool,
 
+    #[arg(long, default_value_t = false, help = "Whether to eliminate the size of the polynomial in the sort of candidate variables")]
+    pub no_size_sort: bool,
+
     #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic, help = "Reduction mode")]
     pub mode: ReductionMode,
 

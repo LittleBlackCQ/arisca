@@ -294,7 +294,7 @@ pub fn process_cone(
             })
             .or_else(|_| {
                 debug!("Dfs failed, trying Greedy");
-                run_sub(poly, Domain::Topo(topo), size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
+                run_sub(poly, Domain::Topo(topo), size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.no_size_sort, ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
             })?
     };
     if let (Some(ext), Some(sub_fm)) = (external_flip, state.flip_manager) {
@@ -365,7 +365,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
         ReductionMode::BFS | ReductionMode::DFS => Box::new(DefaultPolicy {}),
         ReductionMode::Random => Box::new(RandomPolicy {}),
-        ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.max_ratio, cfg.abort_ratio)),
+        ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.no_size_sort, cfg.max_ratio, cfg.abort_ratio)),
     };
     let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), Some(cfg.size_limit));
     let state = engine.run(&mut *main_policy)?;

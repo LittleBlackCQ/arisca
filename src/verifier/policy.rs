@@ -40,6 +40,7 @@ impl ReductionPolicy for RandomPolicy {
 }
 
 pub struct LazyGreedyPolicy {
+    no_size_sort: bool,
     max_ratio: f64,
     abort_ratio: usize,
     penalty: HashMap<VarId, u32>,
@@ -95,8 +96,9 @@ impl ReductionPolicy for LazyGreedyPolicy {
 }
 
 impl LazyGreedyPolicy {
-    pub fn new(max_ratio: f64, abort_ratio: usize) -> Self {
+    pub fn new(no_size_sort: bool, max_ratio: f64, abort_ratio: usize) -> Self {
         LazyGreedyPolicy {
+            no_size_sort,
             max_ratio,
             abort_ratio,
             penalty: HashMap::new(),
@@ -137,8 +139,14 @@ impl LazyGreedyPolicy {
         }
 
         stats.sort_by_key(|(v, count)| {
-            let sub_size = substitutions.get(v).map(|s| s.size()).unwrap_or(0) as u32;
-            count * sub_size * *self.penalty.entry(*v).or_insert(1)
+            let count = if self.no_size_sort {
+                *count
+            } else {
+                let sub_size = substitutions.get(v).map(|s| s.size()).unwrap_or(0) as u32;
+                count * sub_size
+            };
+            // avoid overflow here
+            count.saturating_mul(*self.penalty.entry(*v).or_insert(1))
         });
         stats.into_iter().map(|(v, _)| v).collect()
     }

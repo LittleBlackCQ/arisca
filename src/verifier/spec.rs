@@ -37,8 +37,9 @@ impl ArithmeticSpec {
         tokens: &[&str],
         min_prec: u8,
         cursor: &mut usize,
-        offset: &mut usize
-    ) -> Result<SpecExpr, String>{
+        offset: &mut usize,
+        max_offset: &mut usize,
+    ) -> Result<SpecExpr, String> {
         let peek = |pos: usize| tokens.get(pos).copied();
         let next = |pos: &mut usize| {
             let t = tokens.get(*pos).copied();
@@ -49,16 +50,31 @@ impl ArithmeticSpec {
         let token = next(cursor).ok_or("Unexpected end of expression")?;
 
         let mut lhs = if token == "(" {
-            let node = Self::parse_recursive(tokens, 0, cursor, offset)?;
+            let node = Self::parse_recursive(tokens, 0, cursor, offset, max_offset)?;
             if next(cursor) != Some(")") {
                 return Err("Missing ')'".to_string());
             }
             node
         } else if token.starts_with("[") {
-            let width: usize = token[1..token.len()-1].parse().map_err(|_| "Invalid variable width!")?;
+            let inner = &token[1..token.len()-1];
+            
+            let (width_str, offset_str) = match inner.split_once(':') {
+                Some((w, o)) => (w, Some(o)),
+                None => (inner, None),
+            };
 
-            let node = SpecExpr::Var { width, offset: *offset };
-            *offset += width;
+            let width: usize = width_str.parse().map_err(|_| "Invalid variable width!")?;
+            
+            let current_offset = match offset_str {
+                Some(o_str) => o_str.parse().map_err(|_| "Invalid explicit offset!")?,
+                None => *offset, 
+            };
+
+            let node = SpecExpr::Var { width, offset: current_offset };
+            
+            *offset = current_offset + width;
+            *max_offset = (*max_offset).max(*offset);
+            
             node
         } else {
             let val = token.parse().map_err(|_| "Invalid constant!")?;
@@ -75,7 +91,7 @@ impl ArithmeticSpec {
                 break;
             }
             let op = next(cursor).unwrap();
-            let rhs = Self::parse_recursive(tokens, prec + 1, cursor, offset)?;
+            let rhs = Self::parse_recursive(tokens, prec + 1, cursor, offset, max_offset)?;
             lhs = match op {
                 "+" => SpecExpr::Add(Box::new(lhs), Box::new(rhs)),
                 "*" => SpecExpr::Mul(Box::new(lhs), Box::new(rhs)),
@@ -103,7 +119,7 @@ impl ArithmeticSpec {
     }
 
     fn parse_str(s: &str) -> Result<(SpecExpr, usize), String> {
-        let re = Regex::new(r"\[(\d+)\]|(\d+)|([+*()])").map_err(|e| e.to_string())?;
+        let re = Regex::new(r"\[\d+(?::\d+)?\]|\d+|[+*()]").map_err(|e| e.to_string())?;
 
         let mut tokens = Vec::new();
         let mut last_end = 0;
@@ -124,13 +140,14 @@ impl ArithmeticSpec {
 
         let mut cursor = 0;
         let mut offset = 0;
+        let mut max_offset = 0;
 
-        let root = ArithmeticSpec::parse_recursive(&tokens, 0, &mut cursor, &mut offset)?;
+        let root = ArithmeticSpec::parse_recursive(&tokens, 0, &mut cursor, &mut offset, &mut max_offset)?;
 
         if cursor < tokens.len() {
             return Err("Unexpected tokens remaining".to_string());
         }
-        Ok((root, offset))
+        Ok((root, max_offset))
     }
 
     pub fn new(spec_str: Option<&str>, is_signed: bool) -> Result<Self, String> {
@@ -144,7 +161,6 @@ impl ArithmeticSpec {
                 })
             },
             None => {
-                // Enable Default Mode
                 Ok(Self {
                     root: None,
                     total_width: 0,
@@ -156,13 +172,11 @@ impl ArithmeticSpec {
 
     pub fn build_golden(&self, inputs: &[NetId], outputs: &[NetLit], vars: &[VarId]) -> Polynomial {
         let expected_poly = if let Some(root) = &self.root {
-            // --- Mode 1: Explicit (AST) ---
             if inputs.len() != self.total_width {
                 warn!("Input mismatch: Spec expects {} bits, Circuit has {}", self.total_width, inputs.len());
             }
             self.eval_ast(inputs, root, vars)
         } else {
-            // --- Mode 2: Default (Auto Multiplier) ---
             let half = inputs.len() / 2;
             let a_nets = &inputs[..half];
             let b_nets = &inputs[half..];
@@ -176,7 +190,6 @@ impl ArithmeticSpec {
             poly_a * poly_b
         };
 
-        // Output processing (Applied to both modes)
         let out_vars: Vec<VarId> = outputs.iter().map(|o| vars[o.net()]).collect();
         let mut actual_poly = Self::bits_to_poly_signed(&out_vars, self.is_signed);
 

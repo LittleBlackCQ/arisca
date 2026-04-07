@@ -4,8 +4,9 @@ use env_logger::{Builder, Env, Target};
 
 use arisca::{
     aiger::{AigerParser, ToAig}, 
-    circuit::AdderExtractor, 
-    circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}};
+    circuit::{AdderExtractor, ToJson}, 
+    circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}
+};
 
 #[derive(Clone, ValueEnum)]
 enum ExtractMode {
@@ -26,47 +27,55 @@ struct Config {
 
     #[arg(short, long, value_name = "DOT_FILE")]
     dot_file: Option<PathBuf>,
-    
+
     #[arg(short = 'a', long = "aig", value_name = "OUTPUT_AIG")]
     aig_file: Option<PathBuf>,
+
+    #[arg(short = 'j', long = "json", value_name = "OUTPUT_JSON")]
+    json_file: Option<PathBuf>,
 }
 
-fn main() -> Result<(), String>{
+fn main() -> Result<(), String> {
     init_logger();
     let args = Config::parse();
-    
+
     let mut circuit = AigerParser::from_aig(args.path)?;
-    
+
     // Handle extraction chain (supports single or multiple strategies)
     if let Some(chain) = args.extract {
         for mode in chain {
             match mode {
                 ExtractMode::Adder => {
                     circuit = AdderExtractor::run(&circuit);
-                },
+                }
                 ExtractMode::Xor => {
                     circuit = GenericExtractor::run(&circuit, XorExtractor);
-                },
-                ExtractMode::Maj => {
-                    circuit = GenericExtractor::run(&circuit, MajExtractor)
-                },
-                ExtractMode::Xor3 => {
-                    circuit = GenericExtractor::run(&circuit, Xor3Extractor)
                 }
+                ExtractMode::Maj => circuit = GenericExtractor::run(&circuit, MajExtractor),
+                ExtractMode::Xor3 => circuit = GenericExtractor::run(&circuit, Xor3Extractor),
             }
         }
     }
-    
+
     if let Some(dot_file) = args.dot_file {
         circuit.to_dot(&dot_file, None);
         log::info!("DOT file written to: {:?}", dot_file);
     }
 
     if let Some(aig_output_path) = args.aig_file {
-        circuit.write_aig(&aig_output_path)
+        circuit
+            .write_aig(&aig_output_path)
             .map_err(|e| format!("Failed to write AIG file: {}", e))?;
-        
+
         log::info!("AIG file written to: {:?}", aig_output_path);
+    }
+
+    if let Some(json_output_path) = args.json_file {
+        circuit
+            .write_json(&json_output_path)
+            .map_err(|e| format!("Failed to write JSON file: {}", e))?;
+
+        log::info!("JSON file written to: {:?}", json_output_path);
     }
     Ok(())
 }

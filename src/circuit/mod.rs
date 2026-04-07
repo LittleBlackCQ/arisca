@@ -5,10 +5,12 @@ pub mod extractor;
 pub mod cut;
 pub mod sim;
 mod to_aig;
+mod to_json;
 
 pub use basics::{Node, Net, NetId, NodeId, NetLit, Cone};
 pub use extractor::{AdderExtractor, GenericExtractor, XorExtractor, Xor3Extractor, MajExtractor};
 pub use gate::Gate;
+pub use to_json::ToJson;
 
 pub struct Circuit {
     nodes: Vec<Node>,

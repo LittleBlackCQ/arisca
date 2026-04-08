@@ -4,7 +4,8 @@ use env_logger::{Builder, Env, Target};
 
 use arisca::{
     aiger::{AigerParser, ToAig}, 
-    circuit::{AdderExtractor, ToJson}, 
+    json::ToJson,
+    circuit::{AdderExtractor}, 
     circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}
 };
 

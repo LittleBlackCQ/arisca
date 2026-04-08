@@ -25,8 +25,11 @@ pub struct Config {
     #[arg(value_name = "AIG_FILE")]
     pub path: PathBuf,
 
-    #[arg(short, long, value_name = "LOG_FILE")]
+    #[arg(short, long)]
     pub log_file: Option<PathBuf>,
+
+    #[arg(long)]
+    pub meta_file: Option<PathBuf>,
 
     #[arg(short = 's', long = "spec", value_name = "INPUT_SPEC")]
     pub spec_str: Option<String>,

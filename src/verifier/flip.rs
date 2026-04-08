@@ -28,7 +28,13 @@ impl FlipManager {
                 let origin_size = origin_poly.size();
                 let new_size = poly.size();
                 if new_size < origin_size {
-                    debug!("Flip var {:?}, size: {} -> {:?}", v, origin_size, new_size);
+                    debug!("{:<12} {:<20} {:>14} | Size: {:>4} -> {:<4}", 
+                        "[FLIP]",
+                        format!("[~] Flipped var:"), 
+                        v,
+                        origin_size, 
+                        new_size
+                    );
                     self.flipped_vars.insert(*v);
                 } else {
                     *poly = origin_poly;

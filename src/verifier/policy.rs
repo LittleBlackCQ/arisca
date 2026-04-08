@@ -49,7 +49,7 @@ pub struct LazyGreedyPolicy {
 impl ReductionPolicy for LazyGreedyPolicy {
     fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
         let candidates = engine.state.var_domain.candidates();
-        if candidates.len() == 0 || engine.state.poly.size() == 0 {
+        if candidates.len() == 0 {
             return ReductionAction::Stop;
         } else if candidates.len() == 1 {
             return ReductionAction::Reduce(candidates[0]);
@@ -68,9 +68,18 @@ impl ReductionPolicy for LazyGreedyPolicy {
                 continue;
             }
             let ratio = (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
-            debug!("Try size: {:?}, ratio: {:.3}", engine.state.poly.size(), ratio);
+            debug!("{:<12} {:<20} {:>14} | Ratio: {:.3}", 
+                format!("[{}]", engine.name),
+                "[?] Probing size:",
+                format!("{}", engine.state.poly.size()), 
+                ratio
+            );
             if ratio < self.max_ratio {
-                debug!("Choose var: {:?}", var);
+                debug!("{:<12} {:<20} {:>14} | Action: Skip", 
+                    format!("[{}]", engine.name),
+                    format!("[*] Chosen var:"), 
+                    var,
+                );
                 return ReductionAction::Skip;
             } else {
                 let value = self.penalty.entry(var).or_insert(1);
@@ -87,7 +96,11 @@ impl ReductionPolicy for LazyGreedyPolicy {
             }
         }
         if let Some((_, var, state)) = best_candidate {
-            debug!("Choose var: {:?}", var);
+            debug!("{:<12} {:<20} {:>14} | Action: Replace", 
+                format!("[{}]", engine.name),
+                format!("[*] Chosen var:"), 
+                var,
+            );
             return ReductionAction::Replace(state);
         } else {
             return ReductionAction::Reduce(candidates[0]);

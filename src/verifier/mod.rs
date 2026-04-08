@@ -5,6 +5,7 @@ pub mod topo;
 pub mod engine;
 pub mod stats;
 pub mod flip;
+pub mod meta;
 
 pub use stats::ReductionStats;
 use spec::ArithmeticSpec;
@@ -13,12 +14,10 @@ use engine::ReductionEngine;
 use topo::{TopoVar, VecVar, VarDomain, Domain};
 use guard::{SizeGuard};
 use flip::FlipManager;
+use meta::ReductionMeta;
 
 use crate::{
-    circuit::{Circuit, NetId, NodeId, Gate, Cone},
-    bipoly::{Polynomial, VarId},
-    config::{ReductionMode, Config},
-    Result
+    Result, bipoly::{Polynomial, VarId}, circuit::{Circuit, Cone, Gate, NetId, NodeId}, config::{Config, ReductionMode}, json::ToJson
 };
 
 use std::collections::{HashMap, HashSet};
@@ -52,7 +51,9 @@ pub struct ReductionContext<'a> {
 pub struct ReductionState {
     pub poly: Polynomial,
     pub var_domain: Domain,
-    pub flip_manager: Option<FlipManager>
+    pub flip_manager: Option<FlipManager>,
+    pub global_seq: Vec<VarId>,
+    pub poly_sizes: Vec<usize>,
 }
 
 // map half adder outputs to negative to make the reduction faster
@@ -270,17 +271,19 @@ pub fn process_cone(
     ctx: &ReductionContext,
     size_limit: Option<usize>,
     external_flip: Option<&mut FlipManager>
-) -> Result<Polynomial> {
+) -> Result<(Polynomial, Vec<VarId>, Vec<usize>)> {
+    let size_limit = size_limit.unwrap_or(poly.size());
     let run_sub = |p: Polynomial, dom: Domain, limit: usize, policy: &mut dyn ReductionPolicy| -> Result<ReductionState> {
         let state = ReductionState {
             poly: p,
             var_domain: dom,
             flip_manager: external_flip.as_ref().map(|f| (*f).clone()),
+            global_seq: Vec::new(),
+            poly_sizes: Vec::new(),
         };
-        let engine = ReductionEngine::new(ctx, state, None, Some(limit));
+        let engine = ReductionEngine::new(format!("CONE_{}", cone.root), ctx, state, None, Some(limit));
         engine.run(policy)
     };
-    let size_limit = size_limit.unwrap_or(poly.size());
     let state = if is_conv {
         let domain = Domain::Vec(VecVar::new(cone.nets[..cone.nets.len()-1].iter().map(|&n| ctx.vars[n]).collect()));
         run_sub(poly, domain, size_limit * 10, &mut DefaultPolicy {})?
@@ -288,20 +291,27 @@ pub fn process_cone(
         let adj = build_cone_adj(cone, ctx);
         let topo = TopoVar::new(adj);
         run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.bfs())), size_limit, &mut DefaultPolicy {})
-            .or_else(|_| {
-                debug!("Bfs failed, trying Dfs");
+            .or_else(|err| {
+                debug!("{:<12} {:<35} | Error: {}", 
+                    format!("[CONE_{}]", cone.root), 
+                    "[!] BFS failed, fallback to DFS", 
+                    err
+                );
                 run_sub(poly.clone(), Domain::Vec(VecVar::new(topo.dfs())), size_limit, &mut DefaultPolicy {})
             })
-            .or_else(|_| {
-                debug!("Dfs failed, trying Greedy");
+            .or_else(|err| {
+                debug!("{:<12} {:<35} | Error: {}", 
+                    format!("[CONE_{}]", cone.root), 
+                    "[!] DFS failed, fallback to GREEDY", 
+                    err
+                );
                 run_sub(poly, Domain::Topo(topo), size_limit * 10, &mut LazyGreedyPolicy::new(ctx.cfg.no_size_sort, ctx.cfg.max_ratio, ctx.cfg.abort_ratio))
             })?
     };
     if let (Some(ext), Some(sub_fm)) = (external_flip, state.flip_manager) {
         ext.update(&sub_fm);
     }
-    debug!("Cone {:?} (Converging: {}): {} ", cone.root, is_conv, state.poly.size());
-    Ok(state.poly)
+    Ok((state.poly, state.global_seq, state.poly_sizes))
 }
 
 pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial> { 
@@ -331,7 +341,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
             }
         } else {
             if let Some(Substitution::Poly(base_p)) = main_ctx.substitutions.remove(&root_var) {
-                let optimized = process_cone(&cone, base_p, is_conv, &main_ctx, Some(cfg.size_limit), None)?;
+                let (optimized, _, _) = process_cone(&cone, base_p, is_conv, &main_ctx, Some(cfg.size_limit), None)?;
                 main_ctx.substitutions.insert(root_var, Substitution::Poly(optimized));
             }
         }
@@ -350,16 +360,17 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
             })
         }));
 
-    debug!("Start main reduction...");
-
+    let start_poly = spec.build_golden(circuit.inputs(), circuit.outputs(), &vars);
     let main_state = ReductionState {
-        poly: spec.build_golden(circuit.inputs(), circuit.outputs(), &vars),
+        poly_sizes: vec![start_poly.size()],
+        poly: start_poly,
         var_domain: match cfg.mode {
             ReductionMode::BFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).bfs())),
             ReductionMode::DFS => Domain::Vec(VecVar::new(TopoVar::new(final_adj).dfs())),
             ReductionMode::Random | ReductionMode::Heuristic => Domain::Topo(TopoVar::new(final_adj)),
         },
         flip_manager: if cfg.flip { Some(FlipManager::new()) } else { None },
+        global_seq: Vec::new(),
     };
 
     let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
@@ -367,7 +378,12 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         ReductionMode::Random => Box::new(RandomPolicy {}),
         ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.no_size_sort, cfg.max_ratio, cfg.abort_ratio)),
     };
-    let engine = ReductionEngine::new(&main_ctx, main_state, Some(stats), Some(cfg.size_limit));
+    let engine = ReductionEngine::new("MAIN", &main_ctx, main_state, Some(stats), Some(cfg.size_limit));
     let state = engine.run(&mut *main_policy)?;
+
+    if let Some(out_path) = &cfg.meta_file {
+        ReductionMeta::new(&vars, &state.global_seq, &state.poly_sizes).write_json(out_path)?;
+    }
+
     Ok(state.poly)
 }

@@ -1,8 +1,8 @@
-use super::*;
 use super::sim::Simulator;
+use super::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use log::{info, debug};
+use log::{debug, info};
 
 pub trait ExtractorStrategy {
     fn cut_size(&self) -> usize;
@@ -21,21 +21,32 @@ pub struct Match {
 pub struct GenericExtractor;
 impl GenericExtractor {
     pub fn try_match(
-        circuit: &Circuit, 
-        root: NetId, 
-        cut: &BTreeSet<NetId>, 
+        circuit: &Circuit,
+        root: NetId,
+        cut: &BTreeSet<NetId>,
         strategy: &dyn ExtractorStrategy,
         sim: &mut Simulator,
     ) -> Option<Match> {
-        if cut.len() != strategy.cut_size() { return None; }
+        if cut.len() != strategy.cut_size() {
+            return None;
+        }
 
-        let cone= circuit.get_dfs_cone(root, |net| cut.contains(&net));
+        let cone = circuit.get_dfs_cone(root, |net| cut.contains(&net));
 
-        let tt: Vec<bool> = sim.get_partial_tt(&cone.inputs, &cone.nets, &[root]).iter().map(|r| r[0]).collect();
-      
-        strategy.match_tt(&tt).map(|(output_negated, input_negations)| Match { 
-            cone, output_negated, input_negations, gate: strategy.target_gate(),
-        })
+        let tt: Vec<bool> = sim
+            .get_partial_tt(&cone.inputs, &cone.nets, &[root])
+            .iter()
+            .map(|r| r[0])
+            .collect();
+
+        strategy
+            .match_tt(&tt)
+            .map(|(output_negated, input_negations)| Match {
+                cone,
+                output_negated,
+                input_negations,
+                gate: strategy.target_gate(),
+            })
     }
 
     pub fn run<S: ExtractorStrategy>(circuit: &Circuit, strategy: S) -> Circuit {
@@ -56,45 +67,83 @@ impl GenericExtractor {
     }
 
     pub fn rebuild_circuit(circuit: &Circuit, matches: Vec<Match>) -> Circuit {
-        let negated_outputs: HashSet<NetId> = matches.iter()
-            .filter_map(|m| if m.output_negated { Some(m.cone.root) } else { None })
+        let negated_outputs: HashSet<NetId> = matches
+            .iter()
+            .filter_map(|m| {
+                if m.output_negated {
+                    Some(m.cone.root)
+                } else {
+                    None
+                }
+            })
             .collect();
 
-        let match_lookup: HashMap<NetId, &Match> = matches.iter().map(|m| (m.cone.root, m)).collect();
+        let match_lookup: HashMap<NetId, &Match> =
+            matches.iter().map(|m| (m.cone.root, m)).collect();
         // recursive reconstruction - build when needed
         fn reconstruct_node(
-            circuit: &Circuit, 
-            matches: &[Match], 
-            negated_outputs: &HashSet<NetId>, 
-            net_id: &NetId, 
+            circuit: &Circuit,
+            matches: &[Match],
+            negated_outputs: &HashSet<NetId>,
+            net_id: &NetId,
             match_lookup: &HashMap<NetId, &Match>,
-            new_circuit: &mut Circuit, 
-            net_map: &mut HashMap<NetId, NetId>
+            new_circuit: &mut Circuit,
+            net_map: &mut HashMap<NetId, NetId>,
         ) -> NetId {
-            if let Some(&id) = net_map.get(net_id) { return id; }
+            if let Some(&id) = net_map.get(net_id) {
+                return id;
+            }
 
             // mapped node
             if let Some(m) = match_lookup.get(net_id) {
-                let inputs: Vec<NetLit> = m.cone.inputs.iter().zip(m.input_negations.iter())
+                let inputs: Vec<NetLit> = m
+                    .cone
+                    .inputs
+                    .iter()
+                    .zip(m.input_negations.iter())
                     .map(|(n, neg)| {
-                        let mapped = reconstruct_node(circuit, matches, negated_outputs, n, match_lookup,  new_circuit, net_map);
+                        let mapped = reconstruct_node(
+                            circuit,
+                            matches,
+                            negated_outputs,
+                            n,
+                            match_lookup,
+                            new_circuit,
+                            net_map,
+                        );
                         NetLit::new(mapped, neg ^ negated_outputs.contains(n))
                     })
                     .collect();
                 let out = new_circuit.add_gate(m.gate.clone(), inputs)[0];
                 net_map.insert(m.cone.root, out);
                 out
-            } else { // old node
-                let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
-                let inputs: Vec<NetLit> = node.inputs().iter().map(|lit| {
-                        let mapped = reconstruct_node(circuit, matches, negated_outputs, &lit.net(), match_lookup, new_circuit, net_map);
-                        NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
+            } else {
+                // old node
+                let node =
+                    circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
+                let inputs: Vec<NetLit> = node
+                    .inputs()
+                    .iter()
+                    .map(|lit| {
+                        let mapped = reconstruct_node(
+                            circuit,
+                            matches,
+                            negated_outputs,
+                            &lit.net(),
+                            match_lookup,
+                            new_circuit,
+                            net_map,
+                        );
+                        NetLit::new(
+                            mapped,
+                            lit.negative() ^ negated_outputs.contains(&lit.net()),
+                        )
                     })
                     .collect();
                 let outs = new_circuit.add_gate(node.gate().clone(), inputs);
                 for (&origin, &mapped) in node.outputs().iter().zip(outs.iter()) {
                     net_map.insert(origin, mapped);
-                };
+                }
                 net_map[net_id]
             }
         }
@@ -108,11 +157,22 @@ impl GenericExtractor {
             let new_id = new_circuit.add_input();
             net_map.insert(*net_id, new_id);
         }
-        
+
         // POs
         for out_lit in circuit.outputs() {
-            let mapped = reconstruct_node(circuit, matches.as_slice(), &negated_outputs, &out_lit.net(), &match_lookup, &mut new_circuit, &mut net_map);
-            new_circuit.set_output(mapped, out_lit.negative() ^ negated_outputs.contains(&out_lit.net()));
+            let mapped = reconstruct_node(
+                circuit,
+                matches.as_slice(),
+                &negated_outputs,
+                &out_lit.net(),
+                &match_lookup,
+                &mut new_circuit,
+                &mut net_map,
+            );
+            new_circuit.set_output(
+                mapped,
+                out_lit.negative() ^ negated_outputs.contains(&out_lit.net()),
+            );
         }
 
         new_circuit
@@ -123,32 +183,46 @@ impl GenericExtractor {
 
 pub struct XorExtractor;
 impl ExtractorStrategy for XorExtractor {
-    fn cut_size(&self) -> usize { 2 }
-    fn target_gate(&self) -> Gate { Gate::Xor }
+    fn cut_size(&self) -> usize {
+        2
+    }
+    fn target_gate(&self) -> Gate {
+        Gate::Xor
+    }
     fn match_tt(&self, tt: &[bool]) -> Option<(bool, Vec<bool>)> {
         match tt {
             [false, true, true, false] => Some((false, vec![false; 2])),
             [true, false, false, true] => Some((true, vec![false; 2])),
-            _ => None
+            _ => None,
         }
     }
 }
 
 pub struct AndExtractor;
 impl ExtractorStrategy for AndExtractor {
-    fn cut_size(&self) -> usize { 2 }
-    fn target_gate(&self) -> Gate { Gate::And }
+    fn cut_size(&self) -> usize {
+        2
+    }
+    fn target_gate(&self) -> Gate {
+        Gate::And
+    }
     fn match_tt(&self, tt: &[bool]) -> Option<(bool, Vec<bool>)> {
         for mask in 0..4 {
             let negs: Vec<bool> = (0..2).map(|i| (mask >> i) & 1 == 1).collect();
-            let exp_tt: Vec<bool> = (0..4).map(|i| {
-                let v0 = ((i & 1) == 1) ^ negs[0];
-                let v1 = ((i >> 1) & 1 == 1) ^ negs[1];
-                v0 & v1
-            }).collect();
+            let exp_tt: Vec<bool> = (0..4)
+                .map(|i| {
+                    let v0 = ((i & 1) == 1) ^ negs[0];
+                    let v1 = ((i >> 1) & 1 == 1) ^ negs[1];
+                    v0 & v1
+                })
+                .collect();
 
-            if tt == &exp_tt { return Some((false, negs)); }
-            if tt.iter().zip(&exp_tt).all(|(a, b)| *a == !*b) { return Some((true, negs)); }
+            if tt == &exp_tt {
+                return Some((false, negs));
+            }
+            if tt.iter().zip(&exp_tt).all(|(a, b)| *a == !*b) {
+                return Some((true, negs));
+            }
         }
         None
     }
@@ -156,31 +230,45 @@ impl ExtractorStrategy for AndExtractor {
 
 pub struct Xor3Extractor;
 impl ExtractorStrategy for Xor3Extractor {
-    fn cut_size(&self) -> usize { 3 }
-    fn target_gate(&self) -> Gate { Gate::Xor3 }
+    fn cut_size(&self) -> usize {
+        3
+    }
+    fn target_gate(&self) -> Gate {
+        Gate::Xor3
+    }
     fn match_tt(&self, tt: &[bool]) -> Option<(bool, Vec<bool>)> {
         match tt {
             [false, true, true, false, true, false, false, true] => Some((false, vec![false; 3])),
             [true, false, false, true, false, true, true, false] => Some((true, vec![false; 3])),
-            _ => None
+            _ => None,
         }
     }
 }
 
 pub struct MajExtractor;
 impl ExtractorStrategy for MajExtractor {
-    fn cut_size(&self) -> usize { 3 }
-    fn target_gate(&self) -> Gate { Gate::Maj }
+    fn cut_size(&self) -> usize {
+        3
+    }
+    fn target_gate(&self) -> Gate {
+        Gate::Maj
+    }
     fn match_tt(&self, tt: &[bool]) -> Option<(bool, Vec<bool>)> {
         for mask in 0..8 {
             let negs: Vec<bool> = (0..3).map(|i| (mask >> i) & 1 == 1).collect();
-            let exp_tt: Vec<bool> = (0..8).map(|i| {
-                let cnt = (0..3).filter(|b| ((i >> b) & 1 == 1) ^ negs[*b]).count();
-                cnt >= 2
-            }).collect();
+            let exp_tt: Vec<bool> = (0..8)
+                .map(|i| {
+                    let cnt = (0..3).filter(|b| ((i >> b) & 1 == 1) ^ negs[*b]).count();
+                    cnt >= 2
+                })
+                .collect();
 
-            if tt == &exp_tt { return Some((false, negs)); }
-            if tt.iter().zip(&exp_tt).all(|(a, b)| *a == !*b) { return Some((true, negs)); }
+            if tt == &exp_tt {
+                return Some((false, negs));
+            }
+            if tt.iter().zip(&exp_tt).all(|(a, b)| *a == !*b) {
+                return Some((true, negs));
+            }
         }
         None
     }
@@ -209,14 +297,18 @@ impl AdderExtractor {
             for cut in &cut_db[root] {
                 if cut.len() == 2 {
                     for strategy in ha_strategies {
-                        if let Some(m) = GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim) {
+                        if let Some(m) =
+                            GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim)
+                        {
                             ha_candidates.entry(cut.clone()).or_default().push(m);
                             break;
                         }
                     }
                 } else if cut.len() == 3 {
                     for strategy in fa_strategies {
-                        if let Some(m) = GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim) {
+                        if let Some(m) =
+                            GenericExtractor::try_match(circuit, root, cut, strategy, &mut sim)
+                        {
                             fa_candidates.entry(cut.clone()).or_default().push(m);
                             break;
                         }
@@ -229,24 +321,55 @@ impl AdderExtractor {
         let mut consumed_roots = HashSet::new();
 
         let mut find_adder = |sums: &[Match], carries: &[Match], gate_type: Gate| {
-            for (s, c) in sums.iter().flat_map(|s| carries.iter().map(move |c| (s, c))) {
-                if consumed_roots.contains(&s.cone.root) || consumed_roots.contains(&c.cone.root) { continue; }
+            for (s, c) in sums
+                .iter()
+                .flat_map(|s| carries.iter().map(move |c| (s, c)))
+            {
+                if consumed_roots.contains(&s.cone.root) || consumed_roots.contains(&c.cone.root) {
+                    continue;
+                }
 
-                let all_cone_nodes: HashSet<NodeId> = s.cone.nodes.iter().chain(c.cone.nodes.iter()).cloned().collect(); 
-                let all_cone_nets: HashSet<NetId> = s.cone.nets.iter().chain(c.cone.nets.iter()).cloned().collect();
+                let all_cone_nodes: HashSet<NodeId> = s
+                    .cone
+                    .nodes
+                    .iter()
+                    .chain(c.cone.nodes.iter())
+                    .cloned()
+                    .collect();
+                let all_cone_nets: HashSet<NetId> = s
+                    .cone
+                    .nets
+                    .iter()
+                    .chain(c.cone.nets.iter())
+                    .cloned()
+                    .collect();
 
                 if !all_cone_nets.iter().all(|&net| {
                     let is_output = circuit.outputs().iter().any(|o| o.net() == net);
                     if net == s.cone.root || net == c.cone.root {
-                        is_output || circuit.nets_at(net).loads().iter()
-                            .any(|l| !all_cone_nodes.contains(l))
+                        is_output
+                            || circuit
+                                .nets_at(net)
+                                .loads()
+                                .iter()
+                                .any(|l| !all_cone_nodes.contains(l))
                     } else {
-                        !is_output && circuit.nets_at(net).loads().iter()
-                            .all(|l| all_cone_nodes.contains(l))
+                        !is_output
+                            && circuit
+                                .nets_at(net)
+                                .loads()
+                                .iter()
+                                .all(|l| all_cone_nodes.contains(l))
                     }
-                }) { continue; }
+                }) {
+                    continue;
+                }
 
-                matches.push(AdderMatch { sum: (*s).clone(), carry: (*c).clone(), gate: gate_type });
+                matches.push(AdderMatch {
+                    sum: (*s).clone(),
+                    carry: (*c).clone(),
+                    gate: gate_type,
+                });
 
                 consumed_roots.insert(s.cone.root);
                 consumed_roots.insert(c.cone.root);
@@ -257,13 +380,25 @@ impl AdderExtractor {
         for ms in fa_candidates.values() {
             let mut xor3s = Vec::new();
             let mut majs = Vec::new();
-            ms.iter().for_each(|m| if m.gate == Gate::Xor3 { xor3s.push(m.clone()) } else if m.gate == Gate::Maj { majs.push(m.clone()) });
+            ms.iter().for_each(|m| {
+                if m.gate == Gate::Xor3 {
+                    xor3s.push(m.clone())
+                } else if m.gate == Gate::Maj {
+                    majs.push(m.clone())
+                }
+            });
             find_adder(&xor3s, &majs, Gate::FullAdder);
         }
         for ms in ha_candidates.values() {
             let mut xors = Vec::new();
             let mut ands = Vec::new();
-            ms.iter().for_each(|m| if m.gate == Gate::Xor { xors.push(m.clone()) } else if m.gate == Gate::And { ands.push(m.clone()) });
+            ms.iter().for_each(|m| {
+                if m.gate == Gate::Xor {
+                    xors.push(m.clone())
+                } else if m.gate == Gate::And {
+                    ands.push(m.clone())
+                }
+            });
             find_adder(&xors, &ands, Gate::HalfAdder);
         }
 
@@ -279,12 +414,19 @@ impl AdderExtractor {
             match_lookup.insert(m.sum.cone.root, m);
             match_lookup.insert(m.carry.cone.root, m);
 
-            if m.carry.output_negated {negated_outputs.insert(m.carry.cone.root);}
-            let input_parity_diff = m.sum.input_negations.iter()
+            if m.carry.output_negated {
+                negated_outputs.insert(m.carry.cone.root);
+            }
+            let input_parity_diff = m
+                .sum
+                .input_negations
+                .iter()
                 .zip(m.carry.input_negations.iter())
                 .filter(|(a, b)| a != b)
-                .count() % 2 != 0;
-            
+                .count()
+                % 2
+                != 0;
+
             if m.sum.output_negated ^ input_parity_diff {
                 negated_outputs.insert(m.sum.cone.root);
             }
@@ -292,37 +434,75 @@ impl AdderExtractor {
 
         // Phase 2: Recursive Reconstruction
         fn reconstruct(
-            circuit: &Circuit, 
-            matches: &[AdderMatch], 
-            negated_outputs: &HashSet<NetId>, 
-            net_id: &NetId, 
+            circuit: &Circuit,
+            matches: &[AdderMatch],
+            negated_outputs: &HashSet<NetId>,
+            net_id: &NetId,
             match_lookup: &HashMap<NetId, &AdderMatch>,
-            new_circuit: &mut Circuit, 
-            net_map: &mut HashMap<NetId, NetId>
+            new_circuit: &mut Circuit,
+            net_map: &mut HashMap<NetId, NetId>,
         ) -> NetId {
-            if let Some(&id) = net_map.get(net_id) { return id; }
+            if let Some(&id) = net_map.get(net_id) {
+                return id;
+            }
 
             // mapped node
             if let Some(m) = match_lookup.get(net_id) {
-                let inputs: Vec<NetLit> = m.carry.cone.inputs.iter().zip(&m.carry.input_negations).map(|(n, neg)| {
-                    let mapped = reconstruct(circuit, matches, negated_outputs, n, match_lookup, new_circuit, net_map);
-                    NetLit::new(mapped,  neg ^ negated_outputs.contains(n))
-                }).collect();
+                let inputs: Vec<NetLit> = m
+                    .carry
+                    .cone
+                    .inputs
+                    .iter()
+                    .zip(&m.carry.input_negations)
+                    .map(|(n, neg)| {
+                        let mapped = reconstruct(
+                            circuit,
+                            matches,
+                            negated_outputs,
+                            n,
+                            match_lookup,
+                            new_circuit,
+                            net_map,
+                        );
+                        NetLit::new(mapped, neg ^ negated_outputs.contains(n))
+                    })
+                    .collect();
 
                 let outs = new_circuit.add_gate(m.gate.clone(), inputs);
                 net_map.insert(m.carry.cone.root, outs[0]);
                 net_map.insert(m.sum.cone.root, outs[1]);
 
                 net_map[net_id]
-            } else { // old node
-                let node = circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
-                let inputs: Vec<NetLit> = node.inputs().iter().map(|lit| {
-                    let mapped = reconstruct(circuit, matches, negated_outputs, &lit.net(), match_lookup, new_circuit, net_map);
-                    NetLit::new(mapped, lit.negative() ^ negated_outputs.contains(&lit.net()))
-                }).collect();
+            } else {
+                // old node
+                let node =
+                    circuit.nodes_at(circuit.nets_at(*net_id).driver().expect("Floating net!"));
+                let inputs: Vec<NetLit> = node
+                    .inputs()
+                    .iter()
+                    .map(|lit| {
+                        let mapped = reconstruct(
+                            circuit,
+                            matches,
+                            negated_outputs,
+                            &lit.net(),
+                            match_lookup,
+                            new_circuit,
+                            net_map,
+                        );
+                        NetLit::new(
+                            mapped,
+                            lit.negative() ^ negated_outputs.contains(&lit.net()),
+                        )
+                    })
+                    .collect();
 
                 // A very common special case in adders
-                if *node.gate() == Gate::And && let Some(driver1) = new_circuit.nets_at(inputs[0].net()).driver() && let Some(driver2) = new_circuit.nets_at(inputs[1].net()).driver() && driver1 == driver2 {
+                if *node.gate() == Gate::And
+                    && let Some(driver1) = new_circuit.nets_at(inputs[0].net()).driver()
+                    && let Some(driver2) = new_circuit.nets_at(inputs[1].net()).driver()
+                    && driver1 == driver2
+                {
                     debug!("Special case: Half adder with same inputs");
                     let node = new_circuit.nodes_at(driver1);
                     if *new_circuit.nodes_at(driver1).gate() == Gate::HalfAdder {
@@ -337,9 +517,11 @@ impl AdderExtractor {
                         } else if s_lit.negative() && !c_lit.negative() {
                             return c_lit.net();
                         } else {
-                            let hop_inputs = node.inputs().iter().map(|lit| {
-                                NetLit::new(lit.net(), !lit.negative())
-                            }).collect();
+                            let hop_inputs = node
+                                .inputs()
+                                .iter()
+                                .map(|lit| NetLit::new(lit.net(), !lit.negative()))
+                                .collect();
                             let out = new_circuit.add_gate(Gate::And, hop_inputs)[0];
                             net_map.insert(*net_id, out);
                             return out;
@@ -350,7 +532,7 @@ impl AdderExtractor {
                 let outs = new_circuit.add_gate(node.gate().clone(), inputs);
                 for (&origin, &mapped) in node.outputs().iter().zip(outs.iter()) {
                     net_map.insert(origin, mapped);
-                };
+                }
                 net_map[net_id]
             }
         }
@@ -363,14 +545,37 @@ impl AdderExtractor {
         for net_id in circuit.inputs() {
             net_map.insert(*net_id, new_circuit.add_input());
         }
-        
+
         // POs
         for out_lit in circuit.outputs() {
-            let mapped = reconstruct(circuit, &matches, &negated_outputs, &out_lit.net(), &match_lookup, &mut new_circuit, &mut net_map);
-            new_circuit.set_output(mapped, out_lit.negative() ^ negated_outputs.contains(&out_lit.net()));
+            let mapped = reconstruct(
+                circuit,
+                &matches,
+                &negated_outputs,
+                &out_lit.net(),
+                &match_lookup,
+                &mut new_circuit,
+                &mut net_map,
+            );
+            new_circuit.set_output(
+                mapped,
+                out_lit.negative() ^ negated_outputs.contains(&out_lit.net()),
+            );
         }
 
-        info!("Mapped FA = {:?} Mapped HA = {:?}", new_circuit.nodes().iter().filter(|n| { *n.gate() == Gate::FullAdder }).count(), new_circuit.nodes().iter().filter(|n| { *n.gate() == Gate::HalfAdder }).count());
+        info!(
+            "Mapped FA = {:?} Mapped HA = {:?}",
+            new_circuit
+                .nodes()
+                .iter()
+                .filter(|n| { *n.gate() == Gate::FullAdder })
+                .count(),
+            new_circuit
+                .nodes()
+                .iter()
+                .filter(|n| { *n.gate() == Gate::HalfAdder })
+                .count()
+        );
         new_circuit
     }
 }
@@ -382,29 +587,20 @@ mod tests {
     #[test]
     fn test_simple_xor_extraction() {
         let mut circuit = Circuit::empty();
-        
+
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
         // Construct: (in_0 & !in_1)
-        let t0_inputs = vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, true),
-        ];
+        let t0_inputs = vec![NetLit::new(in_0, false), NetLit::new(in_1, true)];
         let t0 = circuit.add_gate(Gate::And, t0_inputs)[0];
 
         // Construct: (!in_0 & in_1)
-        let t1_inputs = vec![
-            NetLit::new(in_0, true),
-            NetLit::new(in_1, false),
-        ];
+        let t1_inputs = vec![NetLit::new(in_0, true), NetLit::new(in_1, false)];
         let t1 = circuit.add_gate(Gate::And, t1_inputs)[0];
 
         // Construct: t0 | t1
-        let out_inputs = vec![
-            NetLit::new(t0, false),
-            NetLit::new(t1, false),
-        ];
+        let out_inputs = vec![NetLit::new(t0, false), NetLit::new(t1, false)];
         let out = circuit.add_gate(Gate::Or, out_inputs)[0];
 
         circuit.set_output(out, false);
@@ -421,7 +617,10 @@ mod tests {
         let driver_node = new_circuit.nets_at(out_net).driver().unwrap();
         assert_eq!(*new_circuit.nodes_at(driver_node).gate(), Gate::Xor);
         assert_eq!(new_circuit.nodes().len(), 1);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
@@ -451,11 +650,11 @@ mod tests {
         circuit.set_output(out2, false);
 
         let new_circuit = GenericExtractor::run(&circuit, Xor3Extractor);
-        
+
         // Check Output 1
         let new_out1_lit = new_circuit.outputs()[0];
         let new_out1_node = new_circuit.nets_at(new_out1_lit.net()).driver().unwrap();
-        
+
         // Check Output 2
         let new_out2_lit = new_circuit.outputs()[1];
         let new_out2_node = new_circuit.nets_at(new_out2_lit.net()).driver().unwrap();
@@ -464,36 +663,30 @@ mod tests {
         assert_eq!(*new_circuit.nodes_at(new_out1_node).gate(), Gate::Xor3);
         assert_eq!(*new_circuit.nodes_at(new_out2_node).gate(), Gate::Xor3);
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
     fn test_xor_extraction_with_internal_fanout() {
         let mut circuit = Circuit::empty();
-        
+
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
-        let t0_inputs = vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, true),
-        ];
+        let t0_inputs = vec![NetLit::new(in_0, false), NetLit::new(in_1, true)];
         let t0 = circuit.add_gate(Gate::And, t0_inputs)[0];
 
-        let t1_inputs = vec![
-            NetLit::new(in_0, true),
-            NetLit::new(in_1, false),
-        ];
+        let t1_inputs = vec![NetLit::new(in_0, true), NetLit::new(in_1, false)];
         let t1 = circuit.add_gate(Gate::And, t1_inputs)[0];
 
-        let out_xor_inputs = vec![
-            NetLit::new(t0, false),
-            NetLit::new(t1, false),
-        ];
+        let out_xor_inputs = vec![NetLit::new(t0, false), NetLit::new(t1, false)];
         let out_xor = circuit.add_gate(Gate::Or, out_xor_inputs)[0];
 
         circuit.set_output(out_xor, false);
-        circuit.set_output(t0, false); 
+        circuit.set_output(t0, false);
 
         let new_circuit = GenericExtractor::run(&circuit, XorExtractor);
 
@@ -514,43 +707,34 @@ mod tests {
         let side_node = new_circuit.nodes_at(side_driver);
         assert_eq!(side_node.inputs().len(), 2);
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
     fn test_internal_consume() {
         // Actually, for a fully strashed circuit, this test is not needed.
         let mut circuit = Circuit::empty();
-        
+
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
         // Construct: (in_0 & !in_1)
-        let t0_inputs = vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, true),
-        ];
+        let t0_inputs = vec![NetLit::new(in_0, false), NetLit::new(in_1, true)];
         let t0 = circuit.add_gate(Gate::And, t0_inputs)[0];
 
         // Construct: (!in_0 & in_1)
-        let t1_inputs = vec![
-            NetLit::new(in_0, true),
-            NetLit::new(in_1, false),
-        ];
+        let t1_inputs = vec![NetLit::new(in_0, true), NetLit::new(in_1, false)];
         let t1 = circuit.add_gate(Gate::And, t1_inputs)[0];
 
         // Construct: t0 | t1
-        let internal_inputs = vec![
-            NetLit::new(t0, false),
-            NetLit::new(t1, false),
-        ];
+        let internal_inputs = vec![NetLit::new(t0, false), NetLit::new(t1, false)];
         let internal = circuit.add_gate(Gate::Or, internal_inputs)[0];
 
         // Consumed node: internal | t0
-        let output_inputs = vec![
-            NetLit::new(internal, false),
-            NetLit::new(t0, false),
-        ];
+        let output_inputs = vec![NetLit::new(internal, false), NetLit::new(t0, false)];
         let out = circuit.add_gate(Gate::Or, output_inputs)[0];
 
         circuit.set_output(out, false);
@@ -567,22 +751,22 @@ mod tests {
         let driver_node = new_circuit.nets_at(out_net).driver().unwrap();
         assert_eq!(*new_circuit.nodes_at(driver_node).gate(), Gate::Xor);
         assert_eq!(new_circuit.nodes().len(), 1);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
-      #[test]
+    #[test]
     fn test_cascade_xors() {
         // Actually, for a fully strashed circuit, this test is not needed.
         let mut circuit = Circuit::empty();
-        
-        let inputs: Vec<NetId>= (0..5).map(|_| circuit.add_input()).collect();
+
+        let inputs: Vec<NetId> = (0..5).map(|_| circuit.add_input()).collect();
 
         let mut xor_input = inputs[0];
         for i in 1..5 {
-            let xor_inputs = vec![
-                NetLit::new(xor_input, false),
-                NetLit::new(inputs[i], false),
-            ];
+            let xor_inputs = vec![NetLit::new(xor_input, false), NetLit::new(inputs[i], false)];
             xor_input = circuit.add_gate(Gate::Xor, xor_inputs)[0];
         }
 
@@ -596,7 +780,10 @@ mod tests {
         assert_eq!(new_circuit.outputs().len(), 1);
 
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
@@ -605,14 +792,14 @@ mod tests {
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
-        let out_xor = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, false),
-        ])[0];
-        let out_and = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, false),
-        ])[0];
+        let out_xor = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(in_0, false), NetLit::new(in_1, false)],
+        )[0];
+        let out_and = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, false), NetLit::new(in_1, false)],
+        )[0];
 
         circuit.set_output(out_and, false);
         circuit.set_output(out_xor, false);
@@ -623,26 +810,26 @@ mod tests {
     }
 
     #[test]
-    fn test_complex_ha() { 
+    fn test_complex_ha() {
         let mut circuit = Circuit::empty();
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
-        let and_0 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, true),
-        ])[0];
+        let and_0 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, false), NetLit::new(in_1, true)],
+        )[0];
 
-        let and_1 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, true),
-            NetLit::new(in_1, false),
-        ])[0];
+        let and_1 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, true), NetLit::new(in_1, false)],
+        )[0];
 
-        let out_0 = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(and_0, false),
-            NetLit::new(and_1, false),
-        ])[0];
-        
+        let out_0 = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(and_0, false), NetLit::new(and_1, false)],
+        )[0];
+
         circuit.set_output(and_0, false);
         circuit.set_output(out_0, false);
 
@@ -654,31 +841,31 @@ mod tests {
     }
 
     #[test]
-    fn test_more_complex_ha() { 
+    fn test_more_complex_ha() {
         let mut circuit = Circuit::empty();
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
 
-        let and_0 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, true),
-        ])[0];
+        let and_0 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, false), NetLit::new(in_1, true)],
+        )[0];
 
-        let and_1 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, true),
-            NetLit::new(in_1, false),
-        ])[0];
+        let and_1 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, true), NetLit::new(in_1, false)],
+        )[0];
 
-        let and_2 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, false),
-        ])[0];
+        let and_2 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(in_0, false), NetLit::new(in_1, false)],
+        )[0];
 
-        let out_0 = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(and_0, false),
-            NetLit::new(and_1, false),
-        ])[0];
-        
+        let out_0 = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(and_0, false), NetLit::new(and_1, false)],
+        )[0];
+
         circuit.set_output(and_2, false);
         circuit.set_output(out_0, false);
 
@@ -690,23 +877,29 @@ mod tests {
     }
 
     #[test]
-    fn test_simple_fa() { 
+    fn test_simple_fa() {
         let mut circuit = Circuit::empty();
         let in_0 = circuit.add_input();
         let in_1 = circuit.add_input();
         let in_2 = circuit.add_input();
 
-        let out_xor3 = circuit.add_gate(Gate::Xor3, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, false),
-            NetLit::new(in_2, false),
-        ])[0];
+        let out_xor3 = circuit.add_gate(
+            Gate::Xor3,
+            vec![
+                NetLit::new(in_0, false),
+                NetLit::new(in_1, false),
+                NetLit::new(in_2, false),
+            ],
+        )[0];
 
-        let out_maj = circuit.add_gate(Gate::Maj, vec![
-            NetLit::new(in_0, false),
-            NetLit::new(in_1, false),
-            NetLit::new(in_2, false),
-        ])[0];
+        let out_maj = circuit.add_gate(
+            Gate::Maj,
+            vec![
+                NetLit::new(in_0, false),
+                NetLit::new(in_1, false),
+                NetLit::new(in_2, false),
+            ],
+        )[0];
 
         circuit.set_output(out_xor3, false);
         circuit.set_output(out_maj, false);
@@ -719,7 +912,7 @@ mod tests {
     #[test]
     fn test_fa_containing_ha() {
         let mut circuit = Circuit::empty();
-        
+
         // 1. Inputs: A, B, Cin
         let a = circuit.add_input();
         let b = circuit.add_input();
@@ -727,36 +920,36 @@ mod tests {
 
         // 2. First Half Adder Structure (Inner HA)
         // HA1_Sum = A ^ B
-        let ha1_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
-        
+        let ha1_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
+
         // HA1_Carry = A & B
-        let ha1_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
+        let ha1_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
 
         // 3. Second Half Adder Structure Logic
         // FA_Sum = HA1_Sum ^ Cin
-        let fa_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let fa_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // HA2_Carry = HA1_Sum & Cin
-        let ha2_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let ha2_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // 4. Final Carry Logic
         // FA_Carry = HA1_Carry | HA2_Carry
-        let fa_carry = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(ha1_carry, false),
-            NetLit::new(ha2_carry, false),
-        ])[0];
+        let fa_carry = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(ha1_carry, false), NetLit::new(ha2_carry, false)],
+        )[0];
 
         circuit.set_output(fa_sum, false);
         circuit.set_output(fa_carry, false);
@@ -768,13 +961,16 @@ mod tests {
         assert_eq!(new_circuit.nodes().len(), 1);
         assert_eq!(*new_circuit.nodes_at(0).gate(), Gate::FullAdder);
 
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
     fn test_fa_containing_ha_extrafanout() {
         let mut circuit = Circuit::empty();
-        
+
         // 1. Inputs: A, B, Cin
         let a = circuit.add_input();
         let b = circuit.add_input();
@@ -782,36 +978,36 @@ mod tests {
 
         // 2. First Half Adder Structure (Inner HA)
         // HA1_Sum = A ^ B
-        let ha1_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
-        
+        let ha1_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
+
         // HA1_Carry = A & B
-        let ha1_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
+        let ha1_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
 
         // 3. Second Half Adder Structure Logic
         // FA_Sum = HA1_Sum ^ Cin
-        let fa_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let fa_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // HA2_Carry = HA1_Sum & Cin
-        let ha2_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let ha2_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // 4. Final Carry Logic
         // FA_Carry = HA1_Carry | HA2_Carry
-        let fa_carry = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(ha1_carry, false),
-            NetLit::new(ha2_carry, false),
-        ])[0];
+        let fa_carry = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(ha1_carry, false), NetLit::new(ha2_carry, false)],
+        )[0];
 
         circuit.set_output(fa_sum, false);
         circuit.set_output(fa_carry, false);
@@ -824,22 +1020,40 @@ mod tests {
         // Verification
         assert_eq!(new_circuit.nodes().len(), 3);
 
-        let ha1 = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[0].net()).driver().unwrap());
+        let ha1 = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[0].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*ha1.gate(), Gate::HalfAdder);
 
-        let ha2 = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[2].net()).driver().unwrap());
+        let ha2 = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[2].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*ha2.gate(), Gate::HalfAdder);
 
-        let or = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[1].net()).driver().unwrap());
+        let or = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[1].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*or.gate(), Gate::Or);
 
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
     fn test_fa_containing_ha_incomplete_extrafanout() {
         let mut circuit = Circuit::empty();
-        
+
         // 1. Inputs: A, B, Cin
         let a = circuit.add_input();
         let b = circuit.add_input();
@@ -847,36 +1061,36 @@ mod tests {
 
         // 2. First Half Adder Structure (Inner HA)
         // HA1_Sum = A ^ B
-        let ha1_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
-        
+        let ha1_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
+
         // HA1_Carry = A & B
-        let ha1_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
+        let ha1_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
 
         // 3. Second Half Adder Structure Logic
         // FA_Sum = HA1_Sum ^ Cin
-        let fa_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let fa_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // HA2_Carry = HA1_Sum & Cin
-        let ha2_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(ha1_sum, false),
-            NetLit::new(cin, false),
-        ])[0];
+        let ha2_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(ha1_sum, false), NetLit::new(cin, false)],
+        )[0];
 
         // 4. Final Carry Logic
         // FA_Carry = HA1_Carry | HA2_Carry
-        let fa_carry = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(ha1_carry, false),
-            NetLit::new(ha2_carry, false),
-        ])[0];
+        let fa_carry = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(ha1_carry, false), NetLit::new(ha2_carry, false)],
+        )[0];
 
         circuit.set_output(fa_sum, false);
         circuit.set_output(fa_carry, false);
@@ -888,16 +1102,34 @@ mod tests {
         // // Verification
         assert_eq!(new_circuit.nodes().len(), 3);
 
-        let ha1 = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[0].net()).driver().unwrap());
+        let ha1 = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[0].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*ha1.gate(), Gate::HalfAdder);
 
-        let ha2 = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[2].net()).driver().unwrap());
+        let ha2 = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[2].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*ha2.gate(), Gate::HalfAdder);
 
-        let or = new_circuit.nodes_at(new_circuit.nets_at(new_circuit.outputs()[1].net()).driver().unwrap());
+        let or = new_circuit.nodes_at(
+            new_circuit
+                .nets_at(new_circuit.outputs()[1].net())
+                .driver()
+                .unwrap(),
+        );
         assert_eq!(*or.gate(), Gate::Or);
 
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
@@ -912,29 +1144,41 @@ mod tests {
         let b2 = circuit.add_input();
 
         // 2. internal gates
-        let maj = circuit.add_gate(Gate::Maj, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-            NetLit::new(cin, true),
-        ])[0];
-        
-        let xor3 = circuit.add_gate(Gate::Xor3, vec![
-            NetLit::new(a, true),
-            NetLit::new(b, true),
-            NetLit::new(cin, false),
-        ])[0];
+        let maj = circuit.add_gate(
+            Gate::Maj,
+            vec![
+                NetLit::new(a, false),
+                NetLit::new(b, false),
+                NetLit::new(cin, true),
+            ],
+        )[0];
 
-        let maj2 = circuit.add_gate(Gate::Maj, vec![
-            NetLit::new(a2, false),
-            NetLit::new(b2, true),
-            NetLit::new(maj, false),
-        ])[0];
+        let xor3 = circuit.add_gate(
+            Gate::Xor3,
+            vec![
+                NetLit::new(a, true),
+                NetLit::new(b, true),
+                NetLit::new(cin, false),
+            ],
+        )[0];
 
-        let xor32 = circuit.add_gate(Gate::Xor3, vec![
-            NetLit::new(a2, true),
-            NetLit::new(b2, false),
-            NetLit::new(maj, true),
-        ])[0];
+        let maj2 = circuit.add_gate(
+            Gate::Maj,
+            vec![
+                NetLit::new(a2, false),
+                NetLit::new(b2, true),
+                NetLit::new(maj, false),
+            ],
+        )[0];
+
+        let xor32 = circuit.add_gate(
+            Gate::Xor3,
+            vec![
+                NetLit::new(a2, true),
+                NetLit::new(b2, false),
+                NetLit::new(maj, true),
+            ],
+        )[0];
 
         circuit.set_output(xor3, true);
         circuit.set_output(xor32, false);
@@ -943,7 +1187,10 @@ mod tests {
         let new_circuit = AdderExtractor::run(&circuit);
 
         assert_eq!(new_circuit.nodes().len(), 2);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 
     #[test]
@@ -958,69 +1205,65 @@ mod tests {
 
         // Step 1: Create a Half Adder (HA) structure that can be recognized
         // HA Sum = a XOR b
-        let ha_sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
-        
-        // HA Carry = a AND b  
-        let ha_carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
+        let ha_sum = circuit.add_gate(
+            Gate::Xor,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
+
+        // HA Carry = a AND b
+        let ha_carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
 
         // Step 2: Create separate XOR3 structure using AND/OR gates (not forming FA)
         // Build XOR3(c, d, e) = (c XOR d) XOR e
         // First: c XOR d using AND/OR implementation
-        let cd_and1 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(c, false),
-            NetLit::new(d, true),
-        ])[0];
-        let cd_and2 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(c, true),
-            NetLit::new(d, false),
-        ])[0];
-        let cd_xor = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(cd_and1, false),
-            NetLit::new(cd_and2, false),
-        ])[0];
-        
+        let cd_and1 =
+            circuit.add_gate(Gate::And, vec![NetLit::new(c, false), NetLit::new(d, true)])[0];
+        let cd_and2 =
+            circuit.add_gate(Gate::And, vec![NetLit::new(c, true), NetLit::new(d, false)])[0];
+        let cd_xor = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(cd_and1, false), NetLit::new(cd_and2, false)],
+        )[0];
+
         // Then: (c XOR d) XOR e
-        let cdxe_and1 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(cd_xor, false),
-            NetLit::new(e, true),
-        ])[0];
-        let cdxe_and2 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(cd_xor, true),
-            NetLit::new(e, false),
-        ])[0];
-        let xor3_out = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(cdxe_and1, false),
-            NetLit::new(cdxe_and2, false),
-        ])[0];
+        let cdxe_and1 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(cd_xor, false), NetLit::new(e, true)],
+        )[0];
+        let cdxe_and2 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(cd_xor, true), NetLit::new(e, false)],
+        )[0];
+        let xor3_out = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(cdxe_and1, false), NetLit::new(cdxe_and2, false)],
+        )[0];
 
         // Step 3: Create separate MAJ structure using AND/OR gates (not forming FA)
         // Build MAJ(c, d, e) = (c & d) | (c & e) | (d & e)
-        let cf_maj = circuit.add_gate(Gate::And, vec![
-            NetLit::new(c, false),
-            NetLit::new(f, false),
-        ])[0];
-        let ce_maj = circuit.add_gate(Gate::And, vec![
-            NetLit::new(c, false),
-            NetLit::new(e, false),
-        ])[0];
-        let fe_maj = circuit.add_gate(Gate::And, vec![
-            NetLit::new(f, false),
-            NetLit::new(e, false),
-        ])[0];
-        let cf_ce_or = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(cf_maj, false),
-            NetLit::new(ce_maj, false),
-        ])[0];
-        let maj_out = circuit.add_gate(Gate::Or, vec![
-            NetLit::new(cf_ce_or, false),
-            NetLit::new(fe_maj, false),
-        ])[0];
+        let cf_maj = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(c, false), NetLit::new(f, false)],
+        )[0];
+        let ce_maj = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(c, false), NetLit::new(e, false)],
+        )[0];
+        let fe_maj = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(f, false), NetLit::new(e, false)],
+        )[0];
+        let cf_ce_or = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(cf_maj, false), NetLit::new(ce_maj, false)],
+        )[0];
+        let maj_out = circuit.add_gate(
+            Gate::Or,
+            vec![NetLit::new(cf_ce_or, false), NetLit::new(fe_maj, false)],
+        )[0];
 
         // Set outputs
         circuit.set_output(ha_sum, false);
@@ -1033,35 +1276,66 @@ mod tests {
 
         // Step 4: Apply AdderExtractor first - should recognize the Half Adder
         let after_adder = AdderExtractor::run(&circuit);
-        assert_eq!(after_adder.nodes().iter().filter(|n| *n.gate() == Gate::HalfAdder).count(), 1);
+        assert_eq!(
+            after_adder
+                .nodes()
+                .iter()
+                .filter(|n| *n.gate() == Gate::HalfAdder)
+                .count(),
+            1
+        );
         assert_eq!(Simulator::compute_tt(&after_adder), original_tt);
 
         // Step 5: Apply XorExtractor - should extract XOR gates from the remaining structures
         let after_xor = GenericExtractor::run(&after_adder, XorExtractor);
-        let xor_count = after_xor.nodes().iter().filter(|n| *n.gate() == Gate::Xor).count();
+        let xor_count = after_xor
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::Xor)
+            .count();
         // Should have extracted at least 2 XOR gates (from the XOR3 structure breakdown)
         assert_eq!(xor_count, 2);
         assert_eq!(Simulator::compute_tt(&after_xor), original_tt);
 
         // Step 6: Apply Xor3Extractor - should extract one XOR3 gate
         let after_xor3 = GenericExtractor::run(&after_xor, Xor3Extractor);
-        let xor3_count = after_xor3.nodes().iter().filter(|n| *n.gate() == Gate::Xor3).count();
+        let xor3_count = after_xor3
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::Xor3)
+            .count();
         assert_eq!(xor3_count, 1);
         assert_eq!(Simulator::compute_tt(&after_xor3), original_tt);
 
         // Step 7: Apply MajExtractor - should extract one MAJ gate
         let final_circuit = GenericExtractor::run(&after_xor3, MajExtractor);
-        let maj_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Maj).count();
+        let maj_count = final_circuit
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::Maj)
+            .count();
         assert_eq!(maj_count, 1);
-        
+
         // Final verification
         assert_eq!(Simulator::compute_tt(&final_circuit), original_tt);
-        
+
         // Count all high-level gates
-        let ha_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::HalfAdder).count();
-        let xor3_final_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Xor3).count();
-        let maj_final_count = final_circuit.nodes().iter().filter(|n| *n.gate() == Gate::Maj).count();
-        
+        let ha_count = final_circuit
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::HalfAdder)
+            .count();
+        let xor3_final_count = final_circuit
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::Xor3)
+            .count();
+        let maj_final_count = final_circuit
+            .nodes()
+            .iter()
+            .filter(|n| *n.gate() == Gate::Maj)
+            .count();
+
         assert_eq!(ha_count, 1);
         assert_eq!(xor3_final_count, 1);
         assert_eq!(maj_final_count, 1);
@@ -1075,37 +1349,34 @@ mod tests {
         let c = circuit.add_input();
         let d = circuit.add_input();
 
-        let sum = circuit.add_gate(Gate::Xor, vec![
-            NetLit::new(a, true),
-            NetLit::new(b, false),
-        ])[0];
-        let carry = circuit.add_gate(Gate::And, vec![
-            NetLit::new(a, false),
-            NetLit::new(b, false),
-        ])[0];
+        let sum = circuit.add_gate(Gate::Xor, vec![NetLit::new(a, true), NetLit::new(b, false)])[0];
+        let carry = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(a, false), NetLit::new(b, false)],
+        )[0];
 
-        let converge1 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(sum, true),
-            NetLit::new(carry, true),
-        ])[0];
-        let out3 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(converge1, false),
-            NetLit::new(c, false),
-        ])[0];
+        let converge1 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(sum, true), NetLit::new(carry, true)],
+        )[0];
+        let out3 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(converge1, false), NetLit::new(c, false)],
+        )[0];
 
-        let converge2 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(sum, false),
-            NetLit::new(carry, false),
-        ])[0];
-        let out4 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(converge2, false),
-            NetLit::new(d, false),
-        ])[0];
+        let converge2 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(sum, false), NetLit::new(carry, false)],
+        )[0];
+        let out4 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(converge2, false), NetLit::new(d, false)],
+        )[0];
 
-        let converge3 = circuit.add_gate(Gate::And, vec![
-            NetLit::new(sum, false),
-            NetLit::new(carry, true),
-        ])[0];
+        let converge3 = circuit.add_gate(
+            Gate::And,
+            vec![NetLit::new(sum, false), NetLit::new(carry, true)],
+        )[0];
 
         // let converge4 = circuit.add_gate(Gate::And, vec![
         //     NetLit::new(sum, true),
@@ -1120,6 +1391,9 @@ mod tests {
         circuit.set_output(converge3, true);
 
         let new_circuit = AdderExtractor::run(&circuit);
-        assert_eq!(Simulator::compute_tt(&circuit), Simulator::compute_tt(&new_circuit));
+        assert_eq!(
+            Simulator::compute_tt(&circuit),
+            Simulator::compute_tt(&new_circuit)
+        );
     }
 }

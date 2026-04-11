@@ -1,5 +1,5 @@
 use std::fmt;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 pub struct ReductionStats {
     pub max_size: usize,
@@ -36,12 +36,10 @@ impl fmt::Debug for ReductionStats {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "Execution Summary:")?;
 
-        let mut print_line = |key: &str, val: String| {
-            writeln!(f, "    - {:.<25} {}", key, val)
-        };
+        let mut print_line = |key: &str, val: String| writeln!(f, "    - {:.<25} {}", key, val);
 
-        print_line("Max Poly Size",    self.max_size.to_string())?;
-        print_line("Total Time",       format!("{:?}", self.total_elapsed()))?;
+        print_line("Max Poly Size", self.max_size.to_string())?;
+        print_line("Total Time", format!("{:?}", self.total_elapsed()))?;
         Ok(())
     }
 }

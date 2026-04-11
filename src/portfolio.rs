@@ -1,15 +1,15 @@
 use crate::config::Config;
-use clap::Parser;
 use crate::{
+    Result,
     bipoly::Polynomial,
     circuit::Circuit,
     verifier::{ReductionStats, verify},
-    Result
 };
+use clap::Parser;
 
-use log::{info};
+use log::info;
 use std::{
-    ffi::{OsString},
+    ffi::OsString,
     sync::{Arc, mpsc},
     thread::spawn,
 };
@@ -23,7 +23,10 @@ impl Portfolio {
         let mut configs = Vec::new();
         let mut id = 0;
 
-        info!("Base args: {:?}", std::env::args().skip(2).collect::<Vec<String>>().join(" "));
+        info!(
+            "Base args: {:?}",
+            std::env::args().skip(2).collect::<Vec<String>>().join(" ")
+        );
         let base_args: Vec<OsString> = std::env::args_os().collect();
         let mut add_config = |args: &str| {
             let worker_name = format!("Worker{id}");
@@ -101,7 +104,11 @@ impl Portfolio {
     }
 }
 
-pub fn portfolio_main(circuit: Circuit, cfg: Config, stats: &mut ReductionStats) -> Result<Polynomial> {
+pub fn portfolio_main(
+    circuit: Circuit,
+    cfg: Config,
+    stats: &mut ReductionStats,
+) -> Result<Polynomial> {
     info!("Starting portfolio...");
     let shared_circuit = Arc::new(circuit);
     let portfolio = Portfolio::new(cfg);
@@ -111,8 +118,6 @@ pub fn portfolio_main(circuit: Circuit, cfg: Config, stats: &mut ReductionStats)
             *stats = new_stats;
             Ok(poly)
         }
-        Err(e) => {
-            Err(e)
-        }
+        Err(e) => Err(e),
     }
 }

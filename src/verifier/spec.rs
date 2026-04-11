@@ -1,9 +1,9 @@
-use crate::circuit::{NetId, NetLit};
 use crate::bipoly::{Polynomial, VarId};
+use crate::circuit::{NetId, NetLit};
 
-use rug::Integer;
-use regex::Regex;
 use log::warn;
+use regex::Regex;
+use rug::Integer;
 
 #[derive(Debug, Clone)]
 enum SpecExpr {
@@ -26,7 +26,8 @@ impl ArithmeticSpec {
             let init = Polynomial::from_var(msb, Integer::from(weight));
 
             rest.iter().rev().fold(init, |acc, &var| {
-                acc * Polynomial::from_constant(Integer::from(2)) + Polynomial::from_var(var, Integer::from(1))
+                acc * Polynomial::from_constant(Integer::from(2))
+                    + Polynomial::from_var(var, Integer::from(1))
             })
         } else {
             Polynomial::new()
@@ -43,7 +44,9 @@ impl ArithmeticSpec {
         let peek = |pos: usize| tokens.get(pos).copied();
         let next = |pos: &mut usize| {
             let t = tokens.get(*pos).copied();
-            if t.is_some() { *pos += 1; }
+            if t.is_some() {
+                *pos += 1;
+            }
             t
         };
 
@@ -56,25 +59,28 @@ impl ArithmeticSpec {
             }
             node
         } else if token.starts_with("[") {
-            let inner = &token[1..token.len()-1];
-            
+            let inner = &token[1..token.len() - 1];
+
             let (width_str, offset_str) = match inner.split_once(':') {
                 Some((w, o)) => (w, Some(o)),
                 None => (inner, None),
             };
 
             let width: usize = width_str.parse().map_err(|_| "Invalid variable width!")?;
-            
+
             let current_offset = match offset_str {
                 Some(o_str) => o_str.parse().map_err(|_| "Invalid explicit offset!")?,
-                None => *offset, 
+                None => *offset,
             };
 
-            let node = SpecExpr::Var { width, offset: current_offset };
-            
+            let node = SpecExpr::Var {
+                width,
+                offset: current_offset,
+            };
+
             *offset = current_offset + width;
             *max_offset = (*max_offset).max(*offset);
-            
+
             node
         } else {
             let val = token.parse().map_err(|_| "Invalid constant!")?;
@@ -107,7 +113,7 @@ impl ArithmeticSpec {
         match node {
             SpecExpr::Const(v) => Polynomial::from_constant(v.clone()),
             SpecExpr::Var { width, offset } => {
-                let vars: Vec<VarId> = inputs[*offset .. offset + width]
+                let vars: Vec<VarId> = inputs[*offset..offset + width]
                     .iter()
                     .map(|&net| var[net])
                     .collect();
@@ -127,7 +133,11 @@ impl ArithmeticSpec {
         for m in re.find_iter(s) {
             let skipped = &s[last_end..m.start()];
             if !skipped.trim().is_empty() {
-                return Err(format!("Unexpected character(s) at index {}: '{}'", last_end, skipped.trim()));
+                return Err(format!(
+                    "Unexpected character(s) at index {}: '{}'",
+                    last_end,
+                    skipped.trim()
+                ));
             }
 
             tokens.push(m.as_str());
@@ -135,14 +145,18 @@ impl ArithmeticSpec {
         }
         let trailing = &s[last_end..];
         if !trailing.trim().is_empty() {
-            return Err(format!("Unexpected character(s) at the end: '{}'", trailing.trim()));
+            return Err(format!(
+                "Unexpected character(s) at the end: '{}'",
+                trailing.trim()
+            ));
         }
 
         let mut cursor = 0;
         let mut offset = 0;
         let mut max_offset = 0;
 
-        let root = ArithmeticSpec::parse_recursive(&tokens, 0, &mut cursor, &mut offset, &mut max_offset)?;
+        let root =
+            ArithmeticSpec::parse_recursive(&tokens, 0, &mut cursor, &mut offset, &mut max_offset)?;
 
         if cursor < tokens.len() {
             return Err("Unexpected tokens remaining".to_string());
@@ -159,21 +173,23 @@ impl ArithmeticSpec {
                     total_width: width,
                     is_signed,
                 })
-            },
-            None => {
-                Ok(Self {
-                    root: None,
-                    total_width: 0,
-                    is_signed,
-                })
             }
+            None => Ok(Self {
+                root: None,
+                total_width: 0,
+                is_signed,
+            }),
         }
     }
 
     pub fn build_golden(&self, inputs: &[NetId], outputs: &[NetLit], vars: &[VarId]) -> Polynomial {
         let expected_poly = if let Some(root) = &self.root {
             if inputs.len() != self.total_width {
-                warn!("Input mismatch: Spec expects {} bits, Circuit has {}", self.total_width, inputs.len());
+                warn!(
+                    "Input mismatch: Spec expects {} bits, Circuit has {}",
+                    self.total_width,
+                    inputs.len()
+                );
             }
             self.eval_ast(inputs, root, vars)
         } else {
@@ -186,7 +202,7 @@ impl ArithmeticSpec {
 
             let poly_a = Self::bits_to_poly_signed(&a_vars, self.is_signed);
             let poly_b = Self::bits_to_poly_signed(&b_vars, self.is_signed);
-            
+
             poly_a * poly_b
         };
 
@@ -203,7 +219,9 @@ impl ArithmeticSpec {
     }
 
     pub fn modulus(&self, outputs: &[NetLit]) -> Option<Integer> {
-        if let Some(root) = &self.root && matches!(root, SpecExpr::Const(_)) {
+        if let Some(root) = &self.root
+            && matches!(root, SpecExpr::Const(_))
+        {
             None
         } else {
             Some(Integer::from(1) << outputs.len())

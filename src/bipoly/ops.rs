@@ -1,5 +1,5 @@
 use super::Polynomial;
-use std::ops::{Add, AddAssign, Sub, SubAssign, Neg, Mul, MulAssign};
+use std::ops::{Add, AddAssign, Mul, MulAssign, Neg, Sub, SubAssign};
 
 // --- AddAssign ---
 

@@ -2,18 +2,17 @@ use serde_json::json;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use super::{Circuit, Gate, NetLit};
 use crate::{
+    aiger::{AigData, ToAig},
     json::ToJson,
-    aiger::{AigData, ToAig}
 };
-use super::{Circuit, NetLit, Gate};
-
 
 impl ToAig for Circuit {
     fn get_aig_data(&self) -> AigData {
         let mut and_gates = Vec::new();
         let mut net_to_lit = vec![0usize; self.nets.len()];
-        
+
         let mut input_lits = Vec::new();
         for (i, &net_id) in self.inputs.iter().enumerate() {
             let var_id = i + 1;
@@ -29,7 +28,11 @@ impl ToAig for Circuit {
             if nl.negative() { base ^ 1 } else { base }
         };
 
-        let add_and = |in1: usize, in2: usize, gates: &mut Vec<(usize, usize, usize)>, var_cnt: &mut usize| -> usize {
+        let add_and = |in1: usize,
+                       in2: usize,
+                       gates: &mut Vec<(usize, usize, usize)>,
+                       var_cnt: &mut usize|
+         -> usize {
             *var_cnt += 1;
             let out_lit = *var_cnt * 2;
             gates.push((out_lit, in1, in2));
@@ -61,22 +64,22 @@ impl ToAig for Circuit {
                     let out = add_and(t1 ^ 1, t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
                     net_to_lit[node.outputs()[0]] = out;
                 }
-                Gate::Xor3 => { 
+                Gate::Xor3 => {
                     // a ^ b ^ c = (a ^ b) ^ c
                     let a = get_lit(&node.inputs()[0], &net_to_lit);
                     let b = get_lit(&node.inputs()[1], &net_to_lit);
                     let c = get_lit(&node.inputs()[2], &net_to_lit);
-                    
+
                     // First compute a ^ b
                     let ab_t1 = add_and(a ^ 1, b, &mut and_gates, &mut next_var);
                     let ab_t2 = add_and(a, b ^ 1, &mut and_gates, &mut next_var);
                     let ab_xor = add_and(ab_t1 ^ 1, ab_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
-                    
+
                     // Then compute (a ^ b) ^ c
                     let abc_t1 = add_and(ab_xor ^ 1, c, &mut and_gates, &mut next_var);
                     let abc_t2 = add_and(ab_xor, c ^ 1, &mut and_gates, &mut next_var);
                     let out = add_and(abc_t1 ^ 1, abc_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
-                    
+
                     net_to_lit[node.outputs()[0]] = out;
                 }
                 Gate::Maj => {
@@ -100,7 +103,7 @@ impl ToAig for Circuit {
                     let sum = add_and(t1 ^ 1, t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
                     // Carry = a & b
                     let carry = add_and(a, b, &mut and_gates, &mut next_var);
-                    
+
                     net_to_lit[node.outputs()[0]] = carry;
                     net_to_lit[node.outputs()[1]] = sum;
                 }
@@ -113,11 +116,11 @@ impl ToAig for Circuit {
                     let x1_t1 = add_and(a ^ 1, b, &mut and_gates, &mut next_var);
                     let x1_t2 = add_and(a, b ^ 1, &mut and_gates, &mut next_var);
                     let x1 = add_and(x1_t1 ^ 1, x1_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
-                    
+
                     let sum_t1 = add_and(x1 ^ 1, cin, &mut and_gates, &mut next_var);
                     let sum_t2 = add_and(x1, cin ^ 1, &mut and_gates, &mut next_var);
                     let sum = add_and(sum_t1 ^ 1, sum_t2 ^ 1, &mut and_gates, &mut next_var) ^ 1;
-                    
+
                     // CarryOut = Maj(a, b, cin)
                     let ab = add_and(a, b, &mut and_gates, &mut next_var);
                     let bc = add_and(b, cin, &mut and_gates, &mut next_var);
@@ -131,7 +134,9 @@ impl ToAig for Circuit {
             }
         }
 
-        let output_lits: Vec<usize> = self.outputs.iter()
+        let output_lits: Vec<usize> = self
+            .outputs
+            .iter()
             .map(|nl| get_lit(nl, &net_to_lit))
             .collect();
 

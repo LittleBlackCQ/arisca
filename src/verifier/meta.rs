@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use serde::Serialize;
+use std::collections::HashMap;
 
+use super::VarId;
 use crate::json::ToJson;
-use super::{VarId};
 
 #[derive(Serialize)]
 pub struct ReductionMeta {

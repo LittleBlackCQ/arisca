@@ -1,6 +1,6 @@
-use crate::bipoly::{VarId};
+use crate::bipoly::VarId;
 
-use std::collections::{HashMap, VecDeque, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::sync::Arc;
 
 pub trait VarDomain {
@@ -16,7 +16,7 @@ pub struct TopoVar {
     queue: Vec<VarId>,
 }
 
-impl TopoVar { 
+impl TopoVar {
     pub fn new(adj: HashMap<VarId, Vec<VarId>>) -> Self {
         let mut in_degree = HashMap::new();
         for (v, adj) in &adj {
@@ -25,13 +25,20 @@ impl TopoVar {
                 *in_degree.entry(*u).or_insert(0) += 1;
             }
         }
-        let queue = in_degree.iter().filter_map(|(v, &in_degree)| if in_degree == 0 { Some(*v) } else { None }).collect();
-        TopoVar { adj: Arc::new(adj), in_degree, queue }
+        let queue = in_degree
+            .iter()
+            .filter_map(|(v, &in_degree)| if in_degree == 0 { Some(*v) } else { None })
+            .collect();
+        TopoVar {
+            adj: Arc::new(adj),
+            in_degree,
+            queue,
+        }
     }
 
     pub fn bfs(&self) -> Vec<VarId> {
         let mut current_in_degree = self.in_degree.clone();
-        
+
         let mut queue: VecDeque<VarId> = self.queue.clone().into();
         let mut result = Vec::new();
 
@@ -114,7 +121,10 @@ pub struct VecVar {
 
 impl VecVar {
     pub fn new(candidates: Vec<VarId>) -> Self {
-        VecVar { len: candidates.len(), candidates }
+        VecVar {
+            len: candidates.len(),
+            candidates,
+        }
     }
 }
 

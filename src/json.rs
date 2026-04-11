@@ -2,7 +2,6 @@ use std::fs::File;
 use std::io::{self, Write};
 use std::path::Path;
 
-
 pub trait ToJson {
     fn to_json_string(&self) -> String;
 
@@ -13,4 +12,3 @@ pub trait ToJson {
         Ok(())
     }
 }
-

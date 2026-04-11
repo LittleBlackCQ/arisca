@@ -1,5 +1,5 @@
-use bitvec::prelude::*;
 use super::*;
+use bitvec::prelude::*;
 
 pub struct Simulator<'a> {
     circuit: &'a Circuit,
@@ -15,11 +15,11 @@ impl<'a> Simulator<'a> {
     }
 
     fn compute(
-        &mut self, 
-        input_nets: &[NetId], 
-        input_values: &[bool], 
-        internal_nets: &[NetId], 
-        targets: &[NetId]
+        &mut self,
+        input_nets: &[NetId],
+        input_values: &[bool],
+        internal_nets: &[NetId],
+        targets: &[NetId],
     ) -> Vec<bool> {
         debug_assert_eq!(input_nets.len(), input_values.len());
 
@@ -31,15 +31,17 @@ impl<'a> Simulator<'a> {
             if let Some(node_id) = self.circuit.nets_at(net).driver() {
                 let node = self.circuit.nodes_at(node_id);
                 // Collect inputs for the gate from current state
-                let gate_inputs: Vec<bool> = node.inputs().iter()
+                let gate_inputs: Vec<bool> = node
+                    .inputs()
+                    .iter()
                     .map(|lit| {
                         let v = self.net_values[lit.net()];
                         if lit.negative() { !v } else { v }
                     })
                     .collect();
-                
+
                 let output_values = node.gate().logic(&gate_inputs);
-                
+
                 // Update driver's output nets
                 for (i, &out_net) in node.outputs().iter().enumerate() {
                     self.net_values.set(out_net, output_values[i]);
@@ -56,7 +58,9 @@ impl<'a> Simulator<'a> {
         self.compute(self.circuit.inputs(), inputs, &internal_nets, &[]);
 
         // Extract final circuit outputs handling literal negation
-        self.circuit.outputs().iter()
+        self.circuit
+            .outputs()
+            .iter()
             .map(|lit| {
                 let v = self.net_values[lit.net()];
                 if lit.negative() { !v } else { v }
@@ -71,8 +75,8 @@ impl<'a> Simulator<'a> {
     pub fn get_partial_tt(
         &mut self,
         inputs_nets: &[NetId],
-        internal_nets: &[NetId], 
-        targets: &[NetId]
+        internal_nets: &[NetId],
+        targets: &[NetId],
     ) -> Vec<Vec<bool>> {
         let k = inputs_nets.len();
         assert!(k <= 16, "too many inputs for full TT");
@@ -102,11 +106,11 @@ impl<'a> Simulator<'a> {
         table
     }
 
-    pub fn get_tt_transposed(&mut self) -> Vec<Vec<bool>> { 
+    pub fn get_tt_transposed(&mut self) -> Vec<Vec<bool>> {
         let tt = self.get_tt();
-        (0..tt[0].len()).map(|i| {
-            tt.iter().map(|row| row[i].clone()).collect()
-        }).collect()
+        (0..tt[0].len())
+            .map(|i| tt.iter().map(|row| row[i].clone()).collect())
+            .collect()
     }
 
     pub fn compute_tt(circuit: &'a Circuit) -> Vec<Vec<bool>> {

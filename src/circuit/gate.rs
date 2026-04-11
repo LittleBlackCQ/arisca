@@ -37,21 +37,30 @@ impl Gate {
     }
 
     pub fn logic(&self, inputs: &[bool]) -> Vec<bool> {
-        debug_assert_eq!(inputs.len(), self.n_inputs(), "Wrong number of inputs for {:?} in logic.", self.name());
+        debug_assert_eq!(
+            inputs.len(),
+            self.n_inputs(),
+            "Wrong number of inputs for {:?} in logic.",
+            self.name()
+        );
         let mut outputs = vec![false; self.n_outputs()];
         match self {
             Gate::And => outputs[0] = inputs[0] & inputs[1],
             Gate::Or => outputs[0] = inputs[0] | inputs[1],
             Gate::Xor => outputs[0] = inputs[0] ^ inputs[1],
             Gate::Xor3 => outputs[0] = inputs[0] ^ inputs[1] ^ inputs[2],
-            Gate::Maj => outputs[0] = (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]),
+            Gate::Maj => {
+                outputs[0] =
+                    (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2])
+            }
             // multioutput gates' outputs should be topologically ordered
             Gate::HalfAdder => {
                 outputs[0] = inputs[0] & inputs[1]; // carry
                 outputs[1] = inputs[0] ^ inputs[1]; // sum
             }
             Gate::FullAdder => {
-                outputs[0] = (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]); // carry
+                outputs[0] =
+                    (inputs[0] & inputs[1]) | (inputs[1] & inputs[2]) | (inputs[0] & inputs[2]); // carry
                 outputs[1] = inputs[0] ^ inputs[1] ^ inputs[2]; // sum
             }
         }

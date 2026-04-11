@@ -1,15 +1,15 @@
-use super::{ReductionState, ReductionEngine, VarDomain, SizeGuard, Substitution};
+use super::{ReductionEngine, ReductionState, SizeGuard, Substitution, VarDomain};
 use crate::bipoly::{Polynomial, VarId};
 
-use std::collections::HashMap;
-use rand::{seq::SliceRandom, thread_rng};
 use log::debug;
+use rand::{seq::SliceRandom, thread_rng};
+use std::collections::HashMap;
 
 pub enum ReductionAction {
     Reduce(VarId),
     Replace(ReductionState),
     Skip,
-    Stop
+    Stop,
 }
 
 pub trait ReductionPolicy {
@@ -30,13 +30,17 @@ impl ReductionPolicy for DefaultPolicy {
 pub struct RandomPolicy;
 impl ReductionPolicy for RandomPolicy {
     fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
-        if let Some(v) = engine.state.var_domain.candidates().choose(&mut thread_rng()) {
+        if let Some(v) = engine
+            .state
+            .var_domain
+            .candidates()
+            .choose(&mut thread_rng())
+        {
             ReductionAction::Reduce(*v)
         } else {
             ReductionAction::Stop
         }
     }
-
 }
 
 pub struct LazyGreedyPolicy {
@@ -55,29 +59,36 @@ impl ReductionPolicy for LazyGreedyPolicy {
             return ReductionAction::Reduce(candidates[0]);
         }
 
-        let candidates = self.sort_queue_by_occ_penalty(&candidates, &engine.state.poly, &engine.ctx.substitutions);
+        let candidates = self.sort_queue_by_occ_penalty(
+            &candidates,
+            &engine.state.poly,
+            &engine.ctx.substitutions,
+        );
         let origin_state = engine.state.clone();
         let current_size = engine.state.poly.size();
         let mut best_candidate: Option<(f64, VarId, ReductionState)> = None;
 
         let guard = SizeGuard::new(self.abort_ratio * current_size);
-        for &var in &candidates { 
+        for &var in &candidates {
             if let Err(err) = engine.reduce_var(var, Some(&guard)) {
                 debug!("Var: {:?} failed. Error: {:?}", var, err);
                 engine.state = origin_state.clone();
                 continue;
             }
-            let ratio = (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
-            debug!("{:<12} {:<20} {:>14} | Ratio: {:.3}", 
+            let ratio =
+                (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
+            debug!(
+                "{:<12} {:<20} {:>14} | Ratio: {:.3}",
                 format!("[{}]", engine.name),
                 "[?] Probing size:",
-                format!("{}", engine.state.poly.size()), 
+                format!("{}", engine.state.poly.size()),
                 ratio
             );
             if ratio < self.max_ratio {
-                debug!("{:<12} {:<20} {:>14} | Action: Skip", 
+                debug!(
+                    "{:<12} {:<20} {:>14} | Action: Skip",
                     format!("[{}]", engine.name),
-                    format!("[*] Chosen var:"), 
+                    format!("[*] Chosen var:"),
                     var,
                 );
                 return ReductionAction::Skip;
@@ -96,9 +107,10 @@ impl ReductionPolicy for LazyGreedyPolicy {
             }
         }
         if let Some((_, var, state)) = best_candidate {
-            debug!("{:<12} {:<20} {:>14} | Action: Replace", 
+            debug!(
+                "{:<12} {:<20} {:>14} | Action: Replace",
                 format!("[{}]", engine.name),
-                format!("[*] Chosen var:"), 
+                format!("[*] Chosen var:"),
                 var,
             );
             return ReductionAction::Replace(state);
@@ -118,7 +130,12 @@ impl LazyGreedyPolicy {
         }
     }
 
-    fn sort_queue_by_occ_penalty(&mut self, candidates: &[VarId], poly: &Polynomial, substitutions: &HashMap<VarId, Substitution>) -> Vec<VarId> {
+    fn sort_queue_by_occ_penalty(
+        &mut self,
+        candidates: &[VarId],
+        poly: &Polynomial,
+        substitutions: &HashMap<VarId, Substitution>,
+    ) -> Vec<VarId> {
         let mut stats: Vec<(_, u32)> = candidates.iter().map(|&v| (v, 0)).collect();
         stats.sort_by_key(|(v, _)| *v);
 

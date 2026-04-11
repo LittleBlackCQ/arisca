@@ -1,12 +1,12 @@
 use clap::{Parser, ValueEnum};
-use std::path::PathBuf;
 use env_logger::{Builder, Env, Target};
+use std::path::PathBuf;
 
 use arisca::{
-    aiger::{AigerParser, ToAig}, 
+    aiger::{AigerParser, ToAig},
+    circuit::AdderExtractor,
+    circuit::extractor::{GenericExtractor, MajExtractor, Xor3Extractor, XorExtractor},
     json::ToJson,
-    circuit::{AdderExtractor}, 
-    circuit::extractor::{GenericExtractor, XorExtractor, MajExtractor, Xor3Extractor}
 };
 
 #[derive(Clone, ValueEnum)]
@@ -14,7 +14,7 @@ enum ExtractMode {
     Adder,
     Xor,
     Maj,
-    Xor3
+    Xor3,
 }
 
 #[derive(Parser)]
@@ -23,7 +23,13 @@ struct Config {
     #[arg(value_name = "AIG_FILE")]
     path: PathBuf,
 
-    #[arg(short = 'e', long = "extract", value_enum, use_value_delimiter = true, help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3)")]
+    #[arg(
+        short = 'e',
+        long = "extract",
+        value_enum,
+        use_value_delimiter = true,
+        help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3)"
+    )]
     extract: Option<Vec<ExtractMode>>,
 
     #[arg(short, long, value_name = "DOT_FILE")]

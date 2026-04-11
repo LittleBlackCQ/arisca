@@ -1,13 +1,13 @@
+mod backend;
 pub mod basics;
-pub mod gate;
+pub mod cut;
 pub mod debug;
 pub mod extractor;
-pub mod cut;
+pub mod gate;
 pub mod sim;
-mod backend;
 
-pub use basics::{Node, Net, NetId, NodeId, NetLit, Cone};
-pub use extractor::{AdderExtractor, GenericExtractor, XorExtractor, Xor3Extractor, MajExtractor};
+pub use basics::{Cone, Net, NetId, NetLit, Node, NodeId};
+pub use extractor::{AdderExtractor, GenericExtractor, MajExtractor, Xor3Extractor, XorExtractor};
 pub use gate::Gate;
 
 pub struct Circuit {
@@ -18,7 +18,6 @@ pub struct Circuit {
 }
 
 impl Circuit {
-
     pub fn nodes(&self) -> &[Node] {
         &self.nodes
     }
@@ -65,25 +64,62 @@ impl Circuit {
 
     // cone
     pub fn get_dfs_cone<F>(&self, root: NetId, is_terminal: F) -> Cone
-    where F: Fn(&NetId) -> bool { 
+    where
+        F: Fn(&NetId) -> bool,
+    {
         use std::collections::HashSet;
         let (mut nets, mut nodes, mut inputs) = (Vec::new(), Vec::new(), Vec::new());
-        
-        fn dfs<F>(circuit: &Circuit, net: NetId, is_terminal: &F, nets: &mut Vec<NetId>, nodes: &mut Vec<NodeId>, inputs: &mut Vec<NetId>, visited: &mut HashSet<NetId>)
-        where F: Fn(&NetId) -> bool {
-            if visited.contains(&net) { return; }
+
+        fn dfs<F>(
+            circuit: &Circuit,
+            net: NetId,
+            is_terminal: &F,
+            nets: &mut Vec<NetId>,
+            nodes: &mut Vec<NodeId>,
+            inputs: &mut Vec<NetId>,
+            visited: &mut HashSet<NetId>,
+        ) where
+            F: Fn(&NetId) -> bool,
+        {
+            if visited.contains(&net) {
+                return;
+            }
             visited.insert(net);
-            if is_terminal(&net) { inputs.push(net); return; }
+            if is_terminal(&net) {
+                inputs.push(net);
+                return;
+            }
             if let Some(driver) = circuit.nets_at(net).driver() {
                 for input in circuit.nodes_at(driver).inputs() {
-                    dfs(circuit, input.net(), is_terminal, nets, nodes, inputs, visited);
+                    dfs(
+                        circuit,
+                        input.net(),
+                        is_terminal,
+                        nets,
+                        nodes,
+                        inputs,
+                        visited,
+                    );
                 }
                 nodes.push(driver);
             }
             nets.push(net);
         }
-        dfs(self, root, &is_terminal, &mut nets, &mut nodes, &mut inputs, &mut HashSet::new());
-        Cone { root, inputs, nets, nodes }
+        dfs(
+            self,
+            root,
+            &is_terminal,
+            &mut nets,
+            &mut nodes,
+            &mut inputs,
+            &mut HashSet::new(),
+        );
+        Cone {
+            root,
+            inputs,
+            nets,
+            nodes,
+        }
     }
 
     // builder
@@ -105,7 +141,7 @@ impl Circuit {
 
     pub fn add_gate(&mut self, gate: Gate, inputs: Vec<NetLit>) -> Vec<NetId> {
         let node_id = self.nodes.len();
-        
+
         let mut output_nets = Vec::with_capacity(gate.n_outputs());
         for _ in 0..gate.n_outputs() {
             let net_id = self.nets.len();
@@ -118,21 +154,19 @@ impl Circuit {
             self.nets[input.net()].add_load(node_id);
         }
 
-        let node = Node::new(
-            None,
-            gate,
-            inputs,
-            output_nets.clone()
-        );
+        let node = Node::new(None, gate, inputs, output_nets.clone());
         self.nodes.push(node);
 
         output_nets
     }
 
     pub fn set_output(&mut self, net: NetId, negative: bool) {
-        if !self.outputs.iter().any(|o| o.net() == net && o.negative() == negative) {
+        if !self
+            .outputs
+            .iter()
+            .any(|o| o.net() == net && o.negative() == negative)
+        {
             self.outputs.push(NetLit::new(net, negative));
         }
     }
-
 }

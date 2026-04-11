@@ -1,10 +1,10 @@
-mod term;
-mod ops;
 mod debug;
+mod ops;
+mod term;
 
-pub use term::{VarId, Term};
 use rug::Integer;
-use std::collections::{BTreeMap, btree_map::Entry, HashSet};
+use std::collections::{BTreeMap, HashSet, btree_map::Entry};
+pub use term::{Term, VarId};
 
 #[derive(Clone, Default)]
 pub struct Polynomial {
@@ -59,7 +59,12 @@ impl Polynomial {
     }
 
     pub fn vars(&self) -> Vec<VarId> {
-        self.terms.keys().flat_map(|t| t.vars.clone()).collect::<HashSet<_>>().into_iter().collect()
+        self.terms
+            .keys()
+            .flat_map(|t| t.vars.clone())
+            .collect::<HashSet<_>>()
+            .into_iter()
+            .collect()
     }
 
     pub fn coeff_of(&self, term: &Term) -> Integer {
@@ -74,7 +79,9 @@ impl Polynomial {
     }
 
     pub fn insert(&mut self, term: Term, coeff: Integer) {
-        if coeff.is_zero() { return; }
+        if coeff.is_zero() {
+            return;
+        }
 
         match self.terms.entry(term) {
             Entry::Occupied(mut entry) => {
@@ -122,10 +129,12 @@ impl Polynomial {
     }
 
     pub fn divide_by_var(&self, v: &VarId) -> Self {
-        let t = Term { vars: vec![v.clone()] };
+        let t = Term {
+            vars: vec![v.clone()],
+        };
         self.divide_by_term(&t)
     }
-    
+
     pub fn divide_by_term(&self, t: &Term) -> Self {
         if t.size() == 0 {
             return self.clone();
@@ -184,19 +193,19 @@ impl Polynomial {
     }
 
     pub fn remove_mono_by<F>(&mut self, f: F)
-    where 
-        F: Fn(&Term, &Integer) -> bool 
+    where
+        F: Fn(&Term, &Integer) -> bool,
     {
         self.terms.retain(|term, coeff| !f(term, coeff));
     }
 }
 
 #[cfg(test)]
-mod tests { 
+mod tests {
     use super::*;
 
     #[test]
-    fn test_add() { 
+    fn test_add() {
         let mut a = Polynomial::new();
         let t1 = Term::new(vec![0]);
         let t2 = Term::new(vec![1, 2]);
@@ -233,7 +242,7 @@ mod tests {
     }
 
     #[test]
-    fn test_neg_var() { 
+    fn test_neg_var() {
         let a = Polynomial::from_var(0, Integer::from(1));
         let b = Polynomial::from_var(1, Integer::from(1));
         let one = Polynomial::from_constant(Integer::from(1));

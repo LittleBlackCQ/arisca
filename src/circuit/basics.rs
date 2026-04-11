@@ -1,6 +1,5 @@
 use super::gate::Gate;
 
-
 pub type NodeId = usize;
 pub type NetId = usize;
 
@@ -12,10 +11,7 @@ pub struct NetLit {
 
 impl NetLit {
     pub fn new(net: NetId, negative: bool) -> Self {
-        NetLit {
-            net,
-            negative,
-        }
+        NetLit { net, negative }
     }
 
     pub fn from_positive(net: NetId) -> Self {
@@ -44,7 +40,12 @@ pub struct Node {
 }
 
 impl Node {
-    pub fn new(name: Option<Box<str>>, gate: Gate, inputs: Vec<NetLit>, outputs: Vec<NetId>) -> Self {
+    pub fn new(
+        name: Option<Box<str>>,
+        gate: Gate,
+        inputs: Vec<NetLit>,
+        outputs: Vec<NetId>,
+    ) -> Self {
         Node {
             name,
             gate,
@@ -59,7 +60,6 @@ impl Node {
     pub fn gate(&self) -> &Gate {
         &self.gate
     }
-
 
     pub fn inputs(&self) -> &[NetLit] {
         &self.inputs

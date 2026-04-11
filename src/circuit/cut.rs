@@ -12,7 +12,10 @@ pub struct CutEnumerator {
 
 impl CutEnumerator {
     pub fn new(cut_size: usize, cut_limit: usize) -> Self {
-        Self { cut_size, cut_limit }
+        Self {
+            cut_size,
+            cut_limit,
+        }
     }
 
     fn merge_two(a: &Cut, b: &Cut) -> Cut {
@@ -67,15 +70,17 @@ impl CutEnumerator {
                     continue;
                 }
                 let inputs = node.inputs();
-                
+
                 if inputs.is_empty() {
                     cuts[net].push(Cut::new());
                 } else {
                     let mut new_cuts = cuts[inputs[0].net()].clone();
-                    
+
                     for lit in &inputs[1..] {
                         new_cuts = self.merge_cuts(&new_cuts, &cuts[lit.net()]);
-                        if new_cuts.is_empty() { break; }
+                        if new_cuts.is_empty() {
+                            break;
+                        }
                     }
                     cuts[net] = new_cuts;
                 }
@@ -90,7 +95,7 @@ impl CutEnumerator {
     }
 }
 
-impl Circuit { 
+impl Circuit {
     pub fn get_cuts(&self, cut_size: usize, cut_limit: usize) -> CutDb {
         CutEnumerator::new(cut_size, cut_limit).run(self)
     }

@@ -1,21 +1,33 @@
 use super::*;
 use std::fmt;
-use std::path::Path;
 use std::fs;
+use std::path::Path;
 
-impl fmt::Debug for NetLit { 
+impl fmt::Debug for NetLit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}{}", self.net(), if self.negative() {"'"} else {""})
+        write!(
+            f,
+            "{}{}",
+            self.net(),
+            if self.negative() { "'" } else { "" }
+        )
     }
 }
 
-impl fmt::Debug for Node { 
+impl fmt::Debug for Node {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "(type: {:?}, inputs: {:?}, outputs: {:?}, name: {:?})", self.gate().name(), self.inputs(), self.outputs(), self.name())
+        write!(
+            f,
+            "(type: {:?}, inputs: {:?}, outputs: {:?}, name: {:?})",
+            self.gate().name(),
+            self.inputs(),
+            self.outputs(),
+            self.name()
+        )
     }
 }
 
-impl fmt::Debug for Net { 
+impl fmt::Debug for Net {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if let Some(driver) = self.driver() {
             write!(f, "(driver: {:?}, ", driver)?;
@@ -26,7 +38,7 @@ impl fmt::Debug for Net {
     }
 }
 
-impl fmt::Debug for Circuit { 
+impl fmt::Debug for Circuit {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for i in 0..self.nodes.len() {
             write!(f, "Node {:?}: {:?}\n", i, self.nodes_at(i))?;
@@ -49,21 +61,33 @@ fn get_gate_color(g: &Gate) -> &'static str {
 }
 
 impl Circuit {
-   pub fn to_dot(&self, path: impl AsRef<Path>, cone: Option<&Cone>) {
+    pub fn to_dot(&self, path: impl AsRef<Path>, cone: Option<&Cone>) {
         let mut dot = String::new();
 
         let (valid_nodes, valid_cone_inputs, cone_root) = if let Some(c) = cone {
             (
-                Some(c.nodes.iter().cloned().collect::<std::collections::HashSet<_>>()),
-                Some(c.inputs.iter().cloned().collect::<std::collections::HashSet<_>>()),
-                Some(c.root)
+                Some(
+                    c.nodes
+                        .iter()
+                        .cloned()
+                        .collect::<std::collections::HashSet<_>>(),
+                ),
+                Some(
+                    c.inputs
+                        .iter()
+                        .cloned()
+                        .collect::<std::collections::HashSet<_>>(),
+                ),
+                Some(c.root),
             )
         } else {
             (None, None, None)
         };
 
         let is_node_visible = |node_id: usize| -> bool {
-            valid_nodes.as_ref().map_or(true, |set| set.contains(&node_id))
+            valid_nodes
+                .as_ref()
+                .map_or(true, |set| set.contains(&node_id))
         };
 
         dot.push_str("digraph G {\n");
@@ -87,55 +111,102 @@ impl Circuit {
         if let Some(cone_inputs) = &valid_cone_inputs {
             for &net_id in cone_inputs.iter() {
                 let label = format!("cone_in_{}", net_id);
-                dot.push_str(&format!("    net_{} [label=\"{}\", fillcolor=\"gray\", shape=\"triangle\"];\n", net_id, label));
+                dot.push_str(&format!(
+                    "    net_{} [label=\"{}\", fillcolor=\"gray\", shape=\"triangle\"];\n",
+                    net_id, label
+                ));
             }
         } else {
             for (i, &net_id) in self.inputs.iter().enumerate() {
                 let label = format!("pi_{}", i);
-                dot.push_str(&format!("    net_{} [label=\"{}\", fillcolor=\"gray\", shape=\"triangle\"];\n", net_id, label));
+                dot.push_str(&format!(
+                    "    net_{} [label=\"{}\", fillcolor=\"gray\", shape=\"triangle\"];\n",
+                    net_id, label
+                ));
             }
         }
 
         for (i, node) in self.nodes.iter().enumerate() {
-            if !is_node_visible(i) { continue; }
-            let label = if let Some(name) = node.name() { name.to_string() } else { format!("{}_{}", node.gate().name(), i) };
-            dot.push_str(&format!("    node_{} [label=\"{}\", fillcolor=\"{}\", shape=\"ellipse\"];\n", i, label, get_gate_color(node.gate())));
+            if !is_node_visible(i) {
+                continue;
+            }
+            let label = if let Some(name) = node.name() {
+                name.to_string()
+            } else {
+                format!("{}_{}", node.gate().name(), i)
+            };
+            dot.push_str(&format!(
+                "    node_{} [label=\"{}\", fillcolor=\"{}\", shape=\"ellipse\"];\n",
+                i,
+                label,
+                get_gate_color(node.gate())
+            ));
         }
 
         if let Some(root_net) = cone_root {
-            dot.push_str(&format!("    out_root [label=\"root_{}\", fillcolor=\"gray\", shape=\"invtriangle\"];\n", root_net));
+            dot.push_str(&format!(
+                "    out_root [label=\"root_{}\", fillcolor=\"gray\", shape=\"invtriangle\"];\n",
+                root_net
+            ));
         } else {
             for i in 0..self.outputs().len() {
-                dot.push_str(&format!("    out_{} [label=\"po_{}\", fillcolor=\"gray\", shape=\"invtriangle\"];\n", i, i));
+                dot.push_str(&format!(
+                    "    out_{} [label=\"po_{}\", fillcolor=\"gray\", shape=\"invtriangle\"];\n",
+                    i, i
+                ));
             }
         }
 
         for (node_idx, node) in self.nodes.iter().enumerate() {
-            if !is_node_visible(node_idx) { continue; }
+            if !is_node_visible(node_idx) {
+                continue;
+            }
 
             for input_lit in node.inputs() {
                 let src_net = input_lit.net();
-                let style = if input_lit.negative() { "dashed" } else { "solid" };
+                let style = if input_lit.negative() {
+                    "dashed"
+                } else {
+                    "solid"
+                };
 
                 if let Some(driver_idx) = self.nets_at(src_net).driver() {
                     if is_node_visible(driver_idx) {
                         let driver_node = self.nodes_at(driver_idx);
                         let label_attr = if driver_node.outputs().len() > 1 {
-                            let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
+                            let out_idx = driver_node
+                                .outputs()
+                                .iter()
+                                .position(|&n| n == src_net)
+                                .unwrap_or(0);
                             format!("label=\"{}-{}\", ", src_net, out_idx)
                         } else {
                             format!("label=\"{}\", ", src_net)
                         };
-                        dot.push_str(&format!("    node_{} -> node_{} [{}style=\"{}\"];\n", driver_idx, node_idx, label_attr, style));
-                    } else if valid_cone_inputs.as_ref().map_or(false, |s| s.contains(&src_net)) {
-                        dot.push_str(&format!("    net_{} -> node_{} [style=\"{}\"];\n", src_net, node_idx, style));
+                        dot.push_str(&format!(
+                            "    node_{} -> node_{} [{}style=\"{}\"];\n",
+                            driver_idx, node_idx, label_attr, style
+                        ));
+                    } else if valid_cone_inputs
+                        .as_ref()
+                        .map_or(false, |s| s.contains(&src_net))
+                    {
+                        dot.push_str(&format!(
+                            "    net_{} -> node_{} [style=\"{}\"];\n",
+                            src_net, node_idx, style
+                        ));
                     }
                 } else {
                     let is_global_pi = self.inputs.contains(&src_net) && cone.is_none();
-                    let is_cone_input = valid_cone_inputs.as_ref().map_or(false, |s| s.contains(&src_net));
+                    let is_cone_input = valid_cone_inputs
+                        .as_ref()
+                        .map_or(false, |s| s.contains(&src_net));
 
                     if is_global_pi || is_cone_input {
-                        dot.push_str(&format!("    net_{} -> node_{} [style=\"{}\"];\n", src_net, node_idx, style));
+                        dot.push_str(&format!(
+                            "    net_{} -> node_{} [style=\"{}\"];\n",
+                            src_net, node_idx, style
+                        ));
                     }
                 }
             }
@@ -146,29 +217,50 @@ impl Circuit {
                 if is_node_visible(driver_idx) {
                     let driver_node = self.nodes_at(driver_idx);
                     let label_attr = if driver_node.outputs().len() > 1 {
-                        let out_idx = driver_node.outputs().iter().position(|&n| n == root_net).unwrap_or(0);
+                        let out_idx = driver_node
+                            .outputs()
+                            .iter()
+                            .position(|&n| n == root_net)
+                            .unwrap_or(0);
                         format!("label=\"{}-{}\", ", root_net, out_idx)
                     } else {
                         format!("label=\"{}\", ", root_net)
                     };
-                    dot.push_str(&format!("    node_{} -> out_root [{}style=\"solid\"];\n", driver_idx, label_attr));
+                    dot.push_str(&format!(
+                        "    node_{} -> out_root [{}style=\"solid\"];\n",
+                        driver_idx, label_attr
+                    ));
                 }
             }
         } else {
             for (out_idx, out_lit) in self.outputs.iter().enumerate() {
                 let src_net = out_lit.net();
-                let style = if out_lit.negative() { "dashed" } else { "solid" };
+                let style = if out_lit.negative() {
+                    "dashed"
+                } else {
+                    "solid"
+                };
                 if let Some(driver_idx) = self.nets_at(src_net).driver() {
                     let driver_node = self.nodes_at(driver_idx);
                     let label_attr = if driver_node.outputs().len() > 1 {
-                        let out_idx = driver_node.outputs().iter().position(|&n| n == src_net).unwrap_or(0);
+                        let out_idx = driver_node
+                            .outputs()
+                            .iter()
+                            .position(|&n| n == src_net)
+                            .unwrap_or(0);
                         format!("label=\"{}-{}\", ", src_net, out_idx)
                     } else {
                         format!("label=\"{}\", ", src_net)
                     };
-                    dot.push_str(&format!("    node_{} -> out_{} [{}style=\"{}\"];\n", driver_idx, out_idx, label_attr, style));
+                    dot.push_str(&format!(
+                        "    node_{} -> out_{} [{}style=\"{}\"];\n",
+                        driver_idx, out_idx, label_attr, style
+                    ));
                 } else if self.inputs.contains(&src_net) {
-                    dot.push_str(&format!("    net_{} -> out_{} [style=\"{}\"];\n", src_net, out_idx, style));
+                    dot.push_str(&format!(
+                        "    net_{} -> out_{} [style=\"{}\"];\n",
+                        src_net, out_idx, style
+                    ));
                 }
             }
         }
@@ -183,13 +275,20 @@ impl Circuit {
             }
             if l == 0 {
                 if let Some(cone_inputs) = &valid_cone_inputs {
-                    for &net_id in cone_inputs { same_rank_nodes.push(format!("net_{}", net_id)); }
+                    for &net_id in cone_inputs {
+                        same_rank_nodes.push(format!("net_{}", net_id));
+                    }
                 } else {
-                    for &net_id in &self.inputs { same_rank_nodes.push(format!("net_{}", net_id)); }
+                    for &net_id in &self.inputs {
+                        same_rank_nodes.push(format!("net_{}", net_id));
+                    }
                 }
             }
             if !same_rank_nodes.is_empty() {
-                dot.push_str(&format!("    {{ rank=same; {}; }}\n", same_rank_nodes.join("; ")));
+                dot.push_str(&format!(
+                    "    {{ rank=same; {}; }}\n",
+                    same_rank_nodes.join("; ")
+                ));
             }
         }
 
@@ -206,6 +305,9 @@ impl Circuit {
         }
 
         dot.push_str("}\n");
-        fs::write(path.as_ref(), dot).expect(&format!("Circuit cannot write to file {} as a dot file!", path.as_ref().display()));
+        fs::write(path.as_ref(), dot).expect(&format!(
+            "Circuit cannot write to file {} as a dot file!",
+            path.as_ref().display()
+        ));
     }
 }

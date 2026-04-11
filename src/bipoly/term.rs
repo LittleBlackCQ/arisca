@@ -62,11 +62,8 @@ impl Term {
             new_term.extend_from_slice(&vb[qi..]);
         }
 
-        Term {
-            vars: new_term,
-        }
+        Term { vars: new_term }
     }
-
 
     pub fn div(&self, rhs: &Term) -> Option<Term> {
         let lhs_vars = self.vars();
@@ -94,7 +91,6 @@ impl Term {
         res.extend_from_slice(&lhs_vars[i..]);
         Some(Term { vars: res })
     }
-
 }
 
 impl PartialEq for Term {

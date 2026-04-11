@@ -22,7 +22,7 @@ impl SizeGuard {
             Err(SizeLimitExceeded {
                 size,
                 limit: self.max_terms,
-                })
+            })
         } else {
             Ok(())
         }
@@ -43,26 +43,43 @@ impl Display for SizeLimitExceeded {
 impl std::error::Error for SizeLimitExceeded {}
 
 impl Polynomial {
-    pub fn insert_checked(&mut self, term: Term, coeff: Integer, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn insert_checked(
+        &mut self,
+        term: Term,
+        coeff: Integer,
+        guard: &SizeGuard,
+    ) -> Result<(), SizeLimitExceeded> {
         self.insert(term, coeff);
         guard.check(self.size())?;
         Ok(())
     }
-    pub fn add_assign_checked(&mut self, rhs: Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn add_assign_checked(
+        &mut self,
+        rhs: Polynomial,
+        guard: &SizeGuard,
+    ) -> Result<(), SizeLimitExceeded> {
         for (term, coeff) in rhs.terms {
             self.insert_checked(term, coeff, guard)?
         }
         Ok(())
     }
 
-    pub fn sub_assign_checked(&mut self, rhs: Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn sub_assign_checked(
+        &mut self,
+        rhs: Polynomial,
+        guard: &SizeGuard,
+    ) -> Result<(), SizeLimitExceeded> {
         for (term, coeff) in rhs.terms {
             self.insert_checked(term, -coeff, guard)?;
         }
         Ok(())
     }
 
-    pub fn mul_assign_checked(&mut self, rhs: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn mul_assign_checked(
+        &mut self,
+        rhs: &Polynomial,
+        guard: &SizeGuard,
+    ) -> Result<(), SizeLimitExceeded> {
         if self.is_zero() || rhs.is_zero() {
             self.terms.clear();
             return Ok(());
@@ -82,7 +99,12 @@ impl Polynomial {
         Ok(())
     }
 
-    pub fn substitute_by_poly_checked(&mut self, v: &VarId, poly: &Polynomial, guard: &SizeGuard) -> Result<(), SizeLimitExceeded> {
+    pub fn substitute_by_poly_checked(
+        &mut self,
+        v: &VarId,
+        poly: &Polynomial,
+        guard: &SizeGuard,
+    ) -> Result<(), SizeLimitExceeded> {
         let mut new_poly = Polynomial::new();
         self.terms.retain(|term, coeff| {
             if let Some(new_term) = term.remove_var(v) {

@@ -1,9 +1,10 @@
 use super::{
-    ReductionAction, ReductionContext, ReductionPolicy, ReductionState, ReductionStats, SizeGuard,
-    Substitution, VarDomain, process_cone,
+    ReductionAction, ReductionContext, ReductionMeta, ReductionPolicy, ReductionState,
+    ReductionStats, SizeGuard, Substitution, VarDomain, process_cone,
 };
 use crate::Result;
 use crate::bipoly::{Polynomial, VarId};
+use crate::json::ToJson;
 
 use log::debug;
 
@@ -47,6 +48,17 @@ impl<'a> ReductionEngine<'a> {
             }
             false
         });
+    }
+
+    fn write_partial_meta(&self) -> Result<()> {
+        if self.name != "MAIN" {
+            return Ok(());
+        }
+        if let Some(out_path) = &self.ctx.cfg.meta_file {
+            ReductionMeta::new(self.ctx.vars, &self.state.global_seq, &self.state.poly_sizes)
+                .write_json(out_path)?;
+        }
+        Ok(())
     }
 
     fn apply_reduction(
@@ -143,7 +155,10 @@ impl<'a> ReductionEngine<'a> {
                     break;
                 }
                 ReductionAction::Reduce(var) => {
-                    self.reduce_var(var, None)?;
+                    if let Err(err) = self.reduce_var(var, None) {
+                        self.write_partial_meta()?;
+                        return Err(err);
+                    }
                 }
                 ReductionAction::Replace(state) => {
                     self.state = state;
@@ -165,6 +180,7 @@ impl<'a> ReductionEngine<'a> {
             }
             if let Some(size_limit) = self.size_limit {
                 if self.state.poly.size() > size_limit {
+                    self.write_partial_meta()?;
                     return Err(format!("Size limit exceeded: {:?}", self.state.poly.size()).into());
                 }
             }

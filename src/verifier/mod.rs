@@ -82,70 +82,67 @@ pub fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynom
     let one = Integer::from(1);
     let two = Integer::from(2);
     let four = Integer::from(4);
+    let one_poly = Polynomial::from_constant(one.clone());
 
     for node in circuit.nodes() {
-        let inputs: Vec<VarId> = node.inputs().iter().map(|lit| var[lit.net()]).collect();
         let outputs: Vec<VarId> = node.outputs().iter().map(|net| var[*net]).collect();
+        let input_polys: Vec<Polynomial> = node
+            .inputs()
+            .iter()
+            .map(|lit| {
+                let p = Polynomial::from_var(var[lit.net()], one.clone());
+                if lit.negative() { &one_poly - p } else { p }
+            })
+            .collect();
 
         let mut res = vec![Polynomial::new(); node.gate().n_outputs()];
 
         match node.gate() {
             Gate::And => {
-                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
+                res[0] += &input_polys[0] * &input_polys[1];
             }
             Gate::Or => {
-                res[0] += Polynomial::from_var(inputs[0], one.clone())
-                    + Polynomial::from_var(inputs[1], one.clone())
-                    - Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
+                res[0] += &input_polys[0] + &input_polys[1] - (&input_polys[0] * &input_polys[1]);
             }
             Gate::Xor => {
-                res[0] += Polynomial::from_var(inputs[0], one.clone())
-                    + Polynomial::from_var(inputs[1], one.clone())
-                    - Polynomial::from_vars(vec![inputs[0], inputs[1]], two.clone());
+                res[0] += &input_polys[0]
+                    + &input_polys[1]
+                    - ((&input_polys[0] * &input_polys[1]) * Polynomial::from_constant(two.clone()));
             }
             Gate::Xor3 => {
-                let sum_linear = Polynomial::from_var(inputs[0], one.clone())
-                    + Polynomial::from_var(inputs[1], one.clone())
-                    + Polynomial::from_var(inputs[2], one.clone());
-                let sum_quad = Polynomial::from_vars(vec![inputs[0], inputs[1]], two.clone())
-                    + Polynomial::from_vars(vec![inputs[1], inputs[2]], two.clone())
-                    + Polynomial::from_vars(vec![inputs[0], inputs[2]], two.clone());
-                let cubic =
-                    Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], four.clone());
+                let ab = &input_polys[0] * &input_polys[1];
+                let bc = &input_polys[1] * &input_polys[2];
+                let ac = &input_polys[0] * &input_polys[2];
+                let abc = &ab * &input_polys[2];
+                let sum_linear = &input_polys[0] + &input_polys[1] + &input_polys[2];
+                let sum_quad = ab * Polynomial::from_constant(two.clone())
+                    + bc * Polynomial::from_constant(two.clone())
+                    + ac * Polynomial::from_constant(two.clone());
+                let cubic = abc * Polynomial::from_constant(four.clone());
 
                 res[0] += sum_linear - sum_quad + cubic;
             }
             Gate::Maj => {
-                let sum_quad = Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone())
-                    + Polynomial::from_vars(vec![inputs[1], inputs[2]], one.clone())
-                    + Polynomial::from_vars(vec![inputs[0], inputs[2]], one.clone());
-                let cubic =
-                    Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], two.clone());
+                let ab = &input_polys[0] * &input_polys[1];
+                let bc = &input_polys[1] * &input_polys[2];
+                let ac = &input_polys[0] * &input_polys[2];
+                let sum_quad = ab.clone() + bc.clone() + ac.clone();
+                let cubic = (&ab * &input_polys[2]) * Polynomial::from_constant(two.clone());
                 res[0] += sum_quad - cubic;
             }
             Gate::HalfAdder => {
-                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone());
+                res[0] += &input_polys[0] * &input_polys[1];
                 res[1] += -Polynomial::from_var(outputs[0], two.clone())
-                    + (Polynomial::from_var(inputs[0], one.clone())
-                        + Polynomial::from_var(inputs[1], one.clone()));
+                    + (&input_polys[0] + &input_polys[1]);
             }
             Gate::FullAdder => {
-                res[0] += Polynomial::from_vars(vec![inputs[0], inputs[1]], one.clone())
-                    + Polynomial::from_vars(vec![inputs[0], inputs[2]], one.clone())
-                    + Polynomial::from_vars(vec![inputs[1], inputs[2]], one.clone())
-                    - Polynomial::from_vars(vec![inputs[0], inputs[1], inputs[2]], two.clone());
+                let ab = &input_polys[0] * &input_polys[1];
+                let ac = &input_polys[0] * &input_polys[2];
+                let bc = &input_polys[1] * &input_polys[2];
+                let abc = (&input_polys[0] * &input_polys[1]) * &input_polys[2];
+                res[0] += ab + ac + bc - abc * Polynomial::from_constant(two.clone());
                 res[1] += -Polynomial::from_var(outputs[0], two.clone())
-                    + (Polynomial::from_var(inputs[0], one.clone())
-                        + Polynomial::from_var(inputs[1], one.clone())
-                        + Polynomial::from_var(inputs[2], one.clone()));
-            }
-        }
-
-        for p in res.iter_mut() {
-            for lit in node.inputs().iter() {
-                if lit.negative() {
-                    p.neg_var(&var[lit.net()]);
-                }
+                    + (&input_polys[0] + &input_polys[1] + &input_polys[2]);
             }
         }
 

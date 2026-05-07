@@ -145,7 +145,7 @@ impl<'a> ReductionEngine<'a> {
             "[>] Starting engine execution..."
         );
         loop {
-            match policy.next_action(&mut self) {
+            match policy.next_action(&mut self)? {
                 ReductionAction::Stop => {
                     debug!(
                         "{:<12} {:<35} |",

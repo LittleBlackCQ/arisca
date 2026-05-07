@@ -1,5 +1,8 @@
 use super::{ReductionEngine, ReductionState, SizeGuard, Substitution, VarDomain};
-use crate::bipoly::{Polynomial, VarId};
+use crate::{
+    Result,
+    bipoly::{Polynomial, VarId},
+};
 
 use log::debug;
 use rand::{seq::SliceRandom, thread_rng};
@@ -13,32 +16,32 @@ pub enum ReductionAction {
 }
 
 pub trait ReductionPolicy {
-    fn next_action(&mut self, _engine: &mut ReductionEngine) -> ReductionAction;
+    fn next_action(&mut self, _engine: &mut ReductionEngine) -> Result<ReductionAction>;
 }
 
 pub struct DefaultPolicy;
 impl ReductionPolicy for DefaultPolicy {
-    fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
+    fn next_action(&mut self, engine: &mut ReductionEngine) -> Result<ReductionAction> {
         if let Some(var) = engine.state.var_domain.candidates().last() {
-            ReductionAction::Reduce(*var)
+            Ok(ReductionAction::Reduce(*var))
         } else {
-            ReductionAction::Stop
+            Ok(ReductionAction::Stop)
         }
     }
 }
 
 pub struct RandomPolicy;
 impl ReductionPolicy for RandomPolicy {
-    fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
+    fn next_action(&mut self, engine: &mut ReductionEngine) -> Result<ReductionAction> {
         if let Some(v) = engine
             .state
             .var_domain
             .candidates()
             .choose(&mut thread_rng())
         {
-            ReductionAction::Reduce(*v)
+            Ok(ReductionAction::Reduce(*v))
         } else {
-            ReductionAction::Stop
+            Ok(ReductionAction::Stop)
         }
     }
 }
@@ -51,12 +54,12 @@ pub struct LazyGreedyPolicy {
 }
 
 impl ReductionPolicy for LazyGreedyPolicy {
-    fn next_action(&mut self, engine: &mut ReductionEngine) -> ReductionAction {
+    fn next_action(&mut self, engine: &mut ReductionEngine) -> Result<ReductionAction> {
         let candidates = engine.state.var_domain.candidates();
         if candidates.len() == 0 {
-            return ReductionAction::Stop;
+            return Ok(ReductionAction::Stop);
         } else if candidates.len() == 1 {
-            return ReductionAction::Reduce(candidates[0]);
+            return Ok(ReductionAction::Reduce(candidates[0]));
         }
 
         let candidates = self.sort_queue_by_occ_penalty(
@@ -91,7 +94,7 @@ impl ReductionPolicy for LazyGreedyPolicy {
                     format!("[*] Chosen var:"),
                     var,
                 );
-                return ReductionAction::Skip;
+                return Ok(ReductionAction::Skip);
             } else {
                 let value = self.penalty.entry(var).or_insert(1);
                 *value = value.saturating_mul(2);
@@ -113,9 +116,9 @@ impl ReductionPolicy for LazyGreedyPolicy {
                 format!("[*] Chosen var:"),
                 var,
             );
-            return ReductionAction::Replace(state);
+            return Ok(ReductionAction::Replace(state));
         } else {
-            return ReductionAction::Reduce(candidates[0]);
+            return Ok(ReductionAction::Reduce(candidates[0]));
         }
     }
 }

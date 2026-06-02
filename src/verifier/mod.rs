@@ -212,8 +212,11 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
 
                 let mut queue: Vec<&Cone> = vec![cone];
 
+                let mut visited: HashSet<NetId> = HashSet::new();
                 while let Some(curr_cone) = queue.pop() {
                     for &input_net in curr_cone.inputs.iter() {
+                        if visited.contains(&input_net) { continue; }
+                        visited.insert(input_net);
                         let should_expand = root_to_cone
                             .get(&input_net)
                             .filter(|upstream| upstream.nodes.len() < 5);

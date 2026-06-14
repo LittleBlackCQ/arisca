@@ -1,7 +1,7 @@
 use crate::bipoly::{Polynomial, VarId};
 use crate::circuit::{NetId, NetLit};
 
-use log::warn;
+use log::{info, warn};
 use regex::Regex;
 use rug::Integer;
 
@@ -14,7 +14,9 @@ enum SpecExpr {
         is_output: bool,
     },
     Add(Box<SpecExpr>, Box<SpecExpr>),
+    Sub(Box<SpecExpr>, Box<SpecExpr>),
     Mul(Box<SpecExpr>, Box<SpecExpr>),
+    Neg(Box<SpecExpr>),
 }
 
 pub struct ArithmeticSpec {
@@ -71,7 +73,15 @@ impl ArithmeticSpec {
 
         let token = next(cursor).ok_or("Unexpected end of expression")?;
 
-        let mut lhs = if token == "(" {
+        let mut lhs = if token == "-" {
+            // Unary negation: binds tighter than all binary operators
+            let inner = Self::parse_recursive(
+                tokens, 3, cursor,
+                input_offset, max_input_offset,
+                output_offset, max_output_offset,
+            )?;
+            SpecExpr::Neg(Box::new(inner))
+        } else if token == "(" {
             let node = Self::parse_recursive(
                 tokens, 0, cursor,
                 input_offset, max_input_offset,
@@ -140,7 +150,7 @@ impl ArithmeticSpec {
 
         loop {
             let prec = match peek(*cursor) {
-                Some("+") => 1,
+                Some("+") | Some("-") => 1,
                 Some("*") => 2,
                 _ => break,
             };
@@ -155,6 +165,7 @@ impl ArithmeticSpec {
             )?;
             lhs = match op {
                 "+" => SpecExpr::Add(Box::new(lhs), Box::new(rhs)),
+                "-" => SpecExpr::Sub(Box::new(lhs), Box::new(rhs)),
                 "*" => SpecExpr::Mul(Box::new(lhs), Box::new(rhs)),
                 _ => {
                     return Err(format!("Invalid operator: {}", op));
@@ -165,7 +176,7 @@ impl ArithmeticSpec {
     }
 
     fn tokenize(s: &str) -> Result<Vec<&str>, String> {
-        let re = Regex::new(r"o\[\d+(?::\d+)?\]|\[\d+(?::\d+)?\]|\d+|[+*()=]")
+        let re = Regex::new(r"o\[\d+(?::\d+)?\]|\[\d+(?::\d+)?\]|\d+|[-+*()=]")
             .map_err(|e| e.to_string())?;
 
         let mut tokens = Vec::new();
@@ -198,9 +209,33 @@ impl ArithmeticSpec {
         match expr {
             SpecExpr::Const(_) => false,
             SpecExpr::Var { is_output, .. } => *is_output,
-            SpecExpr::Add(l, r) | SpecExpr::Mul(l, r) => {
+            SpecExpr::Add(l, r) | SpecExpr::Sub(l, r) | SpecExpr::Mul(l, r) => {
                 Self::has_output_var(l) || Self::has_output_var(r)
             }
+            SpecExpr::Neg(e) => Self::has_output_var(e),
+        }
+    }
+
+    /// Sum the actual widths of all input/output vars in the AST
+    fn count_var_widths(expr: &SpecExpr) -> (usize, usize) {
+        match expr {
+            SpecExpr::Const(_) => (0, 0),
+            SpecExpr::Var {
+                width,
+                is_output: true,
+                ..
+            } => (0, *width),
+            SpecExpr::Var {
+                width,
+                is_output: false,
+                ..
+            } => (*width, 0),
+            SpecExpr::Add(l, r) | SpecExpr::Sub(l, r) | SpecExpr::Mul(l, r) => {
+                let (li, lo) = Self::count_var_widths(l);
+                let (ri, ro) = Self::count_var_widths(r);
+                (li + ri, lo + ro)
+            }
+            SpecExpr::Neg(e) => Self::count_var_widths(e),
         }
     }
 
@@ -222,7 +257,20 @@ impl ArithmeticSpec {
                 };
                 (out, inp)
             }
-            SpecExpr::Mul(_, _) => {
+            SpecExpr::Sub(l, r) => {
+                let (lo, li) = Self::split_io_expr(l);
+                let (ro, ri) = Self::split_io_expr(r);
+                let out = match (lo, ro) {
+                    (Some(a), Some(b)) => Some(SpecExpr::Sub(Box::new(a), Box::new(b))),
+                    (x, None) | (None, x) => x,
+                };
+                let inp = match (li, ri) {
+                    (Some(a), Some(b)) => Some(SpecExpr::Sub(Box::new(a), Box::new(b))),
+                    (x, None) | (None, x) => x,
+                };
+                (out, inp)
+            }
+            SpecExpr::Mul(_, _) | SpecExpr::Neg(_) => {
                 if Self::has_output_var(expr) {
                     (Some(expr.clone()), None)
                 } else {
@@ -270,9 +318,16 @@ impl ArithmeticSpec {
                 self.eval_ast(inputs, outputs, l, vars)
                     + self.eval_ast(inputs, outputs, r, vars)
             }
+            SpecExpr::Sub(l, r) => {
+                self.eval_ast(inputs, outputs, l, vars)
+                    - self.eval_ast(inputs, outputs, r, vars)
+            }
             SpecExpr::Mul(l, r) => {
                 self.eval_ast(inputs, outputs, l, vars)
                     * self.eval_ast(inputs, outputs, r, vars)
+            }
+            SpecExpr::Neg(e) => {
+                -self.eval_ast(inputs, outputs, e, vars)
             }
         }
     }
@@ -318,7 +373,9 @@ impl ArithmeticSpec {
                 ));
             }
 
-            Ok((Some(minu), Some(sub), max_input_offset, max_output_offset))
+            let (mi, mo) = Self::count_var_widths(&minu);
+            let (si, so) = Self::count_var_widths(&sub);
+            Ok((Some(minu), Some(sub), mi + si, mo + so))
         } else {
             let any_o = tokens.iter().any(|t| t.starts_with("o["));
 
@@ -350,9 +407,11 @@ impl ArithmeticSpec {
                     warn!("Only output variables found without '='; input side will use default interpretation.");
                 }
 
-                Ok((minu, sub, max_input_offset, max_output_offset))
+                let (ei, eo) = Self::count_var_widths(&expr);
+                Ok((minu, sub, ei, eo))
             } else {
-                Ok((None, Some(expr), max_input_offset, 0))
+                let (ei, _) = Self::count_var_widths(&expr);
+                Ok((None, Some(expr), ei, 0))
             }
         }
     }
@@ -415,21 +474,41 @@ impl ArithmeticSpec {
                 self.eval_ast(inputs, outputs, sub, vars)
             }
             None => {
-                let half = inputs.len() / 2;
-                let a_nets = &inputs[..half];
-                let b_nets = &inputs[half..];
+                if self.minuend.is_none() {
+                    // Only when spec is completely absent, default to multiplier a*b
+                    let half = inputs.len() / 2;
+                    let a_nets = &inputs[..half];
+                    let b_nets = &inputs[half..];
 
-                let a_vars: Vec<VarId> = a_nets.iter().map(|&n| vars[n]).collect();
-                let b_vars: Vec<VarId> = b_nets.iter().map(|&n| vars[n]).collect();
+                    let a_vars: Vec<VarId> = a_nets.iter().map(|&n| vars[n]).collect();
+                    let b_vars: Vec<VarId> = b_nets.iter().map(|&n| vars[n]).collect();
 
-                let poly_a = Self::bits_to_poly_signed(&a_vars, self.is_signed);
-                let poly_b = Self::bits_to_poly_signed(&b_vars, self.is_signed);
+                    let poly_a = Self::bits_to_poly_signed(&a_vars, self.is_signed);
+                    let poly_b = Self::bits_to_poly_signed(&b_vars, self.is_signed);
 
-                poly_a * poly_b
+                    poly_a * poly_b
+                } else {
+                    // Spec provided but only output side, sub_poly is zero
+                    Polynomial::new()
+                }
             }
         };
 
-        minu_poly - sub_poly
+        let result = minu_poly - sub_poly;
+        let modulus_str = match self.modulus(outputs) {
+            Some(m) => format!("2^{}", m.significant_bits() - 1),
+            None => "none".to_string(),
+        };
+        let poly_str = format!("{:?}", result);
+        let poly_display = if poly_str.len() > 200 {
+            let head: String = poly_str.chars().take(120).collect();
+            let tail: String = poly_str.chars().skip(poly_str.chars().count() - 80).collect();
+            format!("{} ... {}", head, tail)
+        } else {
+            poly_str
+        };
+        info!("Spec polynomial: {}, modulus: {}", poly_display, modulus_str);
+        result
     }
 
     pub fn modulus(&self, outputs: &[NetLit]) -> Option<Integer> {
@@ -509,7 +588,38 @@ mod tests {
             ArithmeticSpec::new(Some("o[32:32] + o[16:0] = [16:0]*[16:16]"), false).unwrap();
         assert!(spec.minuend.is_some());
         assert!(spec.subtrahend.is_some());
-        assert_eq!(spec.total_output_width, 64);
+        assert_eq!(spec.total_output_width, 48);
         assert_eq!(spec.total_input_width, 32);
+    }
+
+    #[test]
+    fn test_binary_subtraction() {
+        // o[128] - [64]*[64]: output minus product, no '='
+        let spec =
+            ArithmeticSpec::new(Some("o[128] - [64]*[64]"), false).unwrap();
+        assert!(spec.minuend.is_some());
+        assert!(spec.subtrahend.is_some());
+        assert_eq!(spec.total_output_width, 128);
+        assert_eq!(spec.total_input_width, 128);
+    }
+
+    #[test]
+    fn test_unary_negation() {
+        // -[8]: negate input bits
+        let spec = ArithmeticSpec::new(Some("-[8]"), false).unwrap();
+        assert!(spec.minuend.is_none());
+        assert!(spec.subtrahend.is_some());
+        assert_eq!(spec.total_input_width, 8);
+    }
+
+    #[test]
+    fn test_equation_with_subtraction() {
+        // o[16] = [8]*[8] - [4]
+        let spec =
+            ArithmeticSpec::new(Some("o[16] = [8]*[8] - [4]"), true).unwrap();
+        assert!(spec.minuend.is_some());
+        assert!(spec.subtrahend.is_some());
+        assert_eq!(spec.total_output_width, 16);
+        assert_eq!(spec.total_input_width, 20);
     }
 }

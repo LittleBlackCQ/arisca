@@ -61,6 +61,17 @@ fn test_dotproduct() {
 }
 
 #[test]
+fn test_iccad22a_test17() {
+    let cfg = Config::parse_from([
+        "arisca",
+        "examples/iccad22a_test17.aig",
+        "--spec", "o[33:0]=-[31:0]+[32:31]-2",
+        "--delay",
+    ]);
+    assert!(arisca::run(cfg).unwrap().is_zero(), "iccad22A_test17 verification failed");
+}
+
+#[test]
 fn test_divider() {
     let cfg = Config::parse_from([
         "arisca",

@@ -111,7 +111,7 @@ impl<'a> ReductionEngine<'a> {
                     self.state.poly.clone(),
                     *is_conv,
                     self.ctx,
-                    None,
+                    self.size_limit,
                     self.state.flip_manager.as_mut(),
                 )?;
                 self.state.poly = new_poly;

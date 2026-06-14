@@ -433,6 +433,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
+    let start_poly = spec.build_golden(circuit.inputs(), circuit.outputs(), &vars);
     let modulus = spec.modulus(circuit.outputs());
     let mut substitutions = HashMap::new();
     for (v, p) in init_poly_map(circuit, &vars) {
@@ -493,7 +494,6 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
             }),
     );
 
-    let start_poly = spec.build_golden(circuit.inputs(), circuit.outputs(), &vars);
     let main_state = ReductionState {
         poly_sizes: vec![start_poly.size()],
         poly: start_poly,

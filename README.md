@@ -15,6 +15,9 @@ Ensure you have the Rust toolchain installed.
 git clone https://github.com/LittleBlackCQ/arisca.git
 cd arisca
 
+# Initialize submodules
+git submodule update --init --recursive
+
 # Build the release binary
 cargo build --release
 ```

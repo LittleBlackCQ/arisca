@@ -34,5 +34,6 @@ pub fn run(cfg: Config) -> Result<Polynomial> {
     } else {
         verify(&circuit, &cfg, &mut stats)?
     };
+    log::info!("{:?}", stats);
     Ok(result_poly)
 }

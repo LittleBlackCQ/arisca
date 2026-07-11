@@ -15,6 +15,9 @@ Ensure you have the Rust toolchain installed.
 git clone https://github.com/LittleBlackCQ/arisca.git
 cd arisca
 
+# Initialize submodules
+git submodule update --init --recursive
+
 # Build the release binary
 cargo build --release
 ```
@@ -46,6 +49,7 @@ The `--spec` flag describes how input bits are grouped into variables and what a
 | `[n:i]` | A variable of width n bits, starting at bit index i. |
 | `o[n]` / `o[n:i]` | Same, but for **output** bits (used with `=`). |
 | `+` | Addition |
+| `-` | Subtraction (binary). Also works as unary negation (e.g. `-[n]`). |
 | `*` | Multiplication |
 | `(` `)` | Grouping |
 | `=` | Equation: golden polynomial = **left − right** |

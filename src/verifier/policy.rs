@@ -8,6 +8,8 @@ use log::debug;
 use rand::{seq::SliceRandom, thread_rng};
 use std::collections::HashMap;
 
+const PROBE_ABORT_RATIO: usize = 5;
+
 pub enum ReductionAction {
     Reduce(VarId),
     Replace(ReductionState),
@@ -47,9 +49,7 @@ impl ReductionPolicy for RandomPolicy {
 }
 
 pub struct LazyGreedyPolicy {
-    no_size_sort: bool,
     max_ratio: f64,
-    abort_ratio: usize,
     penalty: HashMap<VarId, u32>,
 }
 
@@ -71,7 +71,7 @@ impl ReductionPolicy for LazyGreedyPolicy {
         let current_size = engine.state.poly.size();
         let mut best_candidate: Option<(f64, VarId, ReductionState)> = None;
 
-        let guard = SizeGuard::new(self.abort_ratio * current_size);
+        let guard = SizeGuard::new(current_size.saturating_mul(PROBE_ABORT_RATIO));
         for &var in &candidates {
             if let Err(err) = engine.reduce_var(var, Some(&guard)) {
                 debug!("Var: {:?} failed. Error: {:?}", var, err);
@@ -124,11 +124,9 @@ impl ReductionPolicy for LazyGreedyPolicy {
 }
 
 impl LazyGreedyPolicy {
-    pub fn new(no_size_sort: bool, max_ratio: f64, abort_ratio: usize) -> Self {
+    pub fn new(max_ratio: f64) -> Self {
         LazyGreedyPolicy {
-            no_size_sort,
             max_ratio,
-            abort_ratio,
             penalty: HashMap::new(),
         }
     }
@@ -172,14 +170,10 @@ impl LazyGreedyPolicy {
         }
 
         stats.sort_by_key(|(v, count)| {
-            let count = if self.no_size_sort {
-                *count
-            } else {
-                let sub_size = substitutions.get(v).map(|s| s.size()).unwrap_or(0) as u32;
-                count * sub_size
-            };
-            // avoid overflow here
-            count.saturating_mul(*self.penalty.entry(*v).or_insert(1))
+            let sub_size = substitutions.get(v).map(|s| s.size()).unwrap_or(0) as u32;
+            count
+                .saturating_mul(sub_size)
+                .saturating_mul(*self.penalty.entry(*v).or_insert(1))
         });
         stats.into_iter().map(|(v, _)| v).collect()
     }

@@ -32,7 +32,7 @@ pub fn run(cfg: Config) -> Result<Polynomial> {
     let result_poly = if cfg.portfolio {
         portfolio_main(circuit, cfg, &mut stats)?
     } else {
-        verify(&circuit, &cfg, &mut stats)?
+        verify(&circuit, &cfg, &mut stats, None)?
     };
     log::info!("{:?}", stats);
     Ok(result_poly)

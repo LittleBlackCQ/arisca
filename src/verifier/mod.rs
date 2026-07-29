@@ -154,22 +154,26 @@ pub fn init_poly_map(circuit: &Circuit, var: &[VarId]) -> HashMap<VarId, Polynom
     poly_map
 }
 
-pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Cone, bool)> {
+pub fn find_ffcc(
+    circuit: &Circuit,
+    vars: &[VarId],
+    pair_ratio_threshold: u8,
+) -> Vec<(Cone, bool)> {
     let terminals: HashSet<NetId> = circuit
         .nets()
         .iter()
         .enumerate()
         .filter_map(|(net_id, net)| {
             if let Some(driver) = net.driver() {
-                if circuit.nodes_at(driver).is_multioutput() {
+                if *circuit.nodes_at(driver).gate() != Gate::And {
                     None
-                } else if net.loads().len() > 1
+                } else if net.loads().len() != 1
                     || circuit
                         .outputs()
                         .iter()
                         .find(|l| l.net() == net_id)
                         .is_some()
-                    || circuit.nodes_at(net.loads()[0]).is_multioutput()
+                    || *circuit.nodes_at(net.loads()[0]).gate() != Gate::And
                 {
                     Some(net_id)
                 } else {
@@ -191,7 +195,7 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
                     if net_id != root && terminals.contains(&net_id) {
                         true
                     } else if let Some(driver) = net.driver() {
-                        circuit.nodes_at(driver).is_multioutput()
+                        *circuit.nodes_at(driver).gate() != Gate::And
                     } else {
                         true
                     }
@@ -236,7 +240,7 @@ pub fn find_ffcc(circuit: &Circuit, vars: &[VarId], sensitivity: u8) -> Vec<(Con
                     .filter(|&(a, b)| b < 0 && (b - a) == 1)
                     .count()
                     * 20
-                    > final_inputs.len() * sensitivity as usize; // sensitivity: 0-10
+                    > final_inputs.len() * pair_ratio_threshold as usize;
 
                 if is_conv {
                     fn get_depth(
@@ -356,10 +360,9 @@ pub fn process_cone(
     size_limit: Option<usize>,
     external_flip: Option<&mut FlipManager>,
 ) -> Result<(Polynomial, Vec<VarId>, Vec<usize>)> {
-    let size_limit = size_limit.unwrap_or(poly.size());
     let run_sub = |p: Polynomial,
                    dom: Domain,
-                   limit: usize,
+                   limit: Option<usize>,
                    policy: &mut dyn ReductionPolicy|
      -> Result<ReductionState> {
         let state = ReductionState {
@@ -369,8 +372,7 @@ pub fn process_cone(
             global_seq: Vec::new(),
             poly_sizes: Vec::new(),
         };
-        let engine =
-            ReductionEngine::new(format!("CONE_{}", cone.root), ctx, state, None, Some(limit));
+        let engine = ReductionEngine::new(format!("CONE_{}", cone.root), ctx, state, None, limit);
         engine.run(policy)
     };
     let state = if is_conv {
@@ -380,7 +382,12 @@ pub fn process_cone(
                 .map(|&n| ctx.vars[n])
                 .collect(),
         ));
-        run_sub(poly, domain, size_limit * 10, &mut DefaultPolicy {})?
+        run_sub(
+            poly,
+            domain,
+            size_limit.map(|limit| limit.saturating_mul(10)),
+            &mut DefaultPolicy {},
+        )?
     } else {
         let adj = build_cone_adj(cone, ctx);
         let topo = TopoVar::new(adj);
@@ -414,12 +421,8 @@ pub fn process_cone(
             run_sub(
                 poly,
                 Domain::Topo(topo),
-                size_limit * 10,
-                &mut LazyGreedyPolicy::new(
-                    ctx.cfg.no_size_sort,
-                    ctx.cfg.max_ratio,
-                    ctx.cfg.abort_ratio,
-                ),
+                size_limit.map(|limit| limit.saturating_mul(10)),
+                &mut LazyGreedyPolicy::new(ctx.cfg.max_ratio),
             )
         })?
     };
@@ -429,7 +432,12 @@ pub fn process_cone(
     Ok((state.poly, state.global_seq, state.poly_sizes))
 }
 
-pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Result<Polynomial> {
+pub fn verify(
+    circuit: &Circuit,
+    cfg: &Config,
+    stats: &mut ReductionStats,
+    size_limit: Option<usize>,
+) -> Result<Polynomial> {
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
@@ -450,7 +458,11 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         substitutions,
     };
 
-    for (cone, is_conv) in find_ffcc(circuit, &vars, cfg.revsca_sensitivity) {
+    for (cone, is_conv) in find_ffcc(
+        circuit,
+        &vars,
+        cfg.cone_expansion.pair_ratio_threshold(),
+    ) {
         let root_var = vars[cone.root];
         final_adj.insert(root_var, cone.inputs.iter().map(|i| vars[*i]).collect());
         if cfg.delay {
@@ -467,7 +479,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
                     base_p,
                     is_conv,
                     &main_ctx,
-                    Some(cfg.size_limit),
+                    size_limit,
                     None,
                 )?;
                 main_ctx
@@ -481,7 +493,7 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
         circuit
             .nodes()
             .iter()
-            .filter(|n| n.outputs().len() > 1)
+            .filter(|n| *n.gate() != Gate::And)
             .flat_map(|n| {
                 let inputs: Vec<VarId> = n.inputs().iter().map(|l| vars[l.net()]).collect();
 
@@ -515,18 +527,14 @@ pub fn verify(circuit: &Circuit, cfg: &Config, stats: &mut ReductionStats) -> Re
     let mut main_policy: Box<dyn ReductionPolicy> = match cfg.mode {
         ReductionMode::BFS | ReductionMode::DFS => Box::new(DefaultPolicy {}),
         ReductionMode::Random => Box::new(RandomPolicy {}),
-        ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(
-            cfg.no_size_sort,
-            cfg.max_ratio,
-            cfg.abort_ratio,
-        )),
+        ReductionMode::Heuristic => Box::new(LazyGreedyPolicy::new(cfg.max_ratio)),
     };
     let engine = ReductionEngine::new(
         "MAIN",
         &main_ctx,
         main_state,
         Some(stats),
-        Some(cfg.size_limit),
+        size_limit,
     );
     let state = engine.run(&mut *main_policy)?;
 

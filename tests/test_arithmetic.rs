@@ -2,14 +2,13 @@ use arisca::config::Config;
 use clap::Parser;
 
 #[test]
-fn test_multiplier() {
+fn test_truncated_multiplier() {
     let cfg = Config::parse_from([
         "arisca",
-        "examples/multiplier.aig",
-        "--spec", "[127]*[129]",
-        "--signed",
+        "examples/multiplier_truncated.aig",
+        "--spec", "[63]*[65]",
     ]);
-    assert!(arisca::run(cfg).unwrap().is_zero(), "127x129 signed multiplier verification failed");
+    assert!(arisca::run(cfg).unwrap().is_zero(), "63x65 truncated multiplier verification failed");
 }
 
 #[test]

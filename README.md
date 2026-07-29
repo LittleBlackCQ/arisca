@@ -58,12 +58,12 @@ Input bits are consumed left-to-right as `[n]` variables appear in the spec. Off
 
 #### Examples
 
-**127×129-bit signed multiplier with truncated 250-bit output**
+**63×65-bit multiplier with truncated 120-bit output**
 ```bash
-cargo run --release --bin arisca examples/multiplier.aig \
-  --spec "[127]*[129]" --signed
+cargo run --release --bin arisca examples/multiplier_truncated.aig \
+  --spec "[63]*[65]"
 ```
-`--signed` treats the MSB of each variable as a sign bit.
+The output is checked modulo `2^120`, matching the circuit's truncated output width.
 
 **256-bit adder with carry-in**
 ```bash

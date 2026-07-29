@@ -18,6 +18,18 @@ pub struct Portfolio {
     configs: Vec<(String, Config)>,
 }
 
+const WORKER_ARGS: [&str; 9] = [
+    "-m heuristic --cone-expansion low",
+    "-m heuristic",
+    "-m heuristic --flip",
+    "-m heuristic --flip --cone-expansion none",
+    "-m heuristic --max-ratio 0.1 --flip --cone-expansion none",
+    "-m bfs",
+    "-m dfs",
+    "-m heuristic --cone-expansion none --delay",
+    "-m heuristic --cone-expansion none --delay --flip",
+];
+
 impl Portfolio {
     pub fn new(_cfg: Config) -> Self {
         let mut configs = Vec::new();
@@ -46,15 +58,9 @@ impl Portfolio {
                 }
             }
         };
-        add_config("-m heuristic -r 9");
-        add_config("-m heuristic");
-        add_config("-m heuristic --flip");
-        add_config("-m heuristic --flip -r 10");
-        add_config("-m heuristic --max-ratio 0.1 --flip -r 10");
-        add_config("-m bfs");
-        add_config("-m dfs");
-        add_config("-m heuristic -r 10 --delay");
-        add_config("-m heuristic -r 10 --delay --flip");
+        for args in WORKER_ARGS {
+            add_config(args);
+        }
 
         Self {
             // base_config: cfg,
@@ -76,7 +82,12 @@ impl Portfolio {
 
             spawn(move || {
                 let mut local_stats = ReductionStats::new();
-                let result = verify(&circuit_clone, &cfg, &mut local_stats);
+                let result = verify(
+                    &circuit_clone,
+                    &cfg,
+                    &mut local_stats,
+                    Some(cfg.size_limit),
+                );
                 let _ = tx_clone.send((result, local_stats, worker_name));
             });
         }

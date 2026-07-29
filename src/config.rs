@@ -1,4 +1,4 @@
-use clap::{Parser, ValueEnum, value_parser};
+use clap::{Parser, ValueEnum};
 use env_logger::{Builder, Env, Target};
 use std::fs::File;
 use std::path::PathBuf;
@@ -17,6 +17,25 @@ pub enum ExtractMode {
     Xor,
     Maj,
     Xor3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub enum ConeExpansion {
+    None,
+    Low,
+    Medium,
+    High,
+}
+
+impl ConeExpansion {
+    pub const fn pair_ratio_threshold(self) -> u8 {
+        match self {
+            Self::None => 10,
+            Self::Low => 9,
+            Self::Medium => 5,
+            Self::High => 0,
+        }
+    }
 }
 
 #[derive(Parser, Debug)]
@@ -46,15 +65,8 @@ pub struct Config {
 
     #[arg(
         long,
-        default_value_t = 5,
-        help = "Abort if the size ratio between the reduced polynomial size and the original size is larger than this value"
-    )]
-    pub abort_ratio: usize,
-
-    #[arg(
-        long,
         default_value_t = 1000000,
-        help = "Polynomial size limit for main reduction"
+        help = "Polynomial size limit for portfolio workers (ignored in single-run mode)"
     )]
     pub size_limit: usize,
 
@@ -71,20 +83,18 @@ pub struct Config {
     #[arg(long, default_value_t = false, help = "Enable portfolio mode")]
     pub portfolio: bool,
 
-    #[arg(
-        long,
-        default_value_t = false,
-        help = "Whether to eliminate the size of the polynomial in the sort of candidate variables"
-    )]
-    pub no_size_sort: bool,
-
     #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic, help = "Reduction mode")]
     pub mode: ReductionMode,
 
-    #[arg(short = 'r', value_parser = value_parser!(u8).range(0..=10), default_value_t = 5, help = "Sensitity to identify converging cones based on the ratio of half adders")]
-    pub revsca_sensitivity: u8,
+    #[arg(
+        long,
+        value_enum,
+        default_value_t = ConeExpansion::Medium,
+        help = "Converging-cone expansion level based on the ratio of half-adder input pairs"
+    )]
+    pub cone_expansion: ConeExpansion,
 
-    #[arg(short = 'e', long = "extract", value_enum, use_value_delimiter = true, default_values_t = vec![ExtractMode::Adder], help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3). Default: adder")]
+    #[arg(short = 'e', long = "extract", value_enum, use_value_delimiter = true, default_values_t = vec![ExtractMode::Adder, ExtractMode::Xor3, ExtractMode::Maj, ExtractMode::Xor], help = "Apply extraction strategy (single) or strategies in sequence (e.g., -e xor,adder,xor3). Default: adder,xor3,maj,xor")]
     pub extract: Vec<ExtractMode>,
 }
 

@@ -161,12 +161,29 @@ impl Circuit {
     }
 
     pub fn set_output(&mut self, net: NetId, negative: bool) {
-        if !self
-            .outputs
-            .iter()
-            .any(|o| o.net() == net && o.negative() == negative)
-        {
-            self.outputs.push(NetLit::new(net, negative));
-        }
+        self.outputs.push(NetLit::new(net, negative));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn repeated_outputs_are_preserved() {
+        let mut circuit = Circuit::empty();
+        let input = circuit.add_input();
+
+        circuit.set_output(input, false);
+        circuit.set_output(input, false);
+        circuit.set_output(input, true);
+
+        assert_eq!(circuit.outputs().len(), 3);
+        assert_eq!(circuit.outputs()[0].net(), input);
+        assert!(!circuit.outputs()[0].negative());
+        assert_eq!(circuit.outputs()[1].net(), input);
+        assert!(!circuit.outputs()[1].negative());
+        assert_eq!(circuit.outputs()[2].net(), input);
+        assert!(circuit.outputs()[2].negative());
     }
 }

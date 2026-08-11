@@ -43,14 +43,34 @@ impl ArithmeticSpec {
     }
 
     fn build_output_poly(outputs: &[NetLit], vars: &[VarId], is_signed: bool) -> Polynomial {
-        let out_vars: Vec<VarId> = outputs.iter().map(|o| vars[o.net()]).collect();
-        let mut poly = Self::bits_to_poly_signed(&out_vars, is_signed);
-        for out in outputs {
-            if out.negative() {
-                poly.neg_var(&vars[out.net()]);
-            }
+        Self::output_bits_to_poly_signed(outputs, vars, is_signed)
+    }
+
+    fn output_bit_to_poly(output: &NetLit, vars: &[VarId]) -> Polynomial {
+        let var = Polynomial::from_var(vars[output.net()], Integer::from(1));
+        if output.negative() {
+            Polynomial::from_constant(Integer::from(1)) - var
+        } else {
+            var
         }
-        poly
+    }
+
+    fn output_bits_to_poly_signed(
+        outputs: &[NetLit],
+        vars: &[VarId],
+        is_signed: bool,
+    ) -> Polynomial {
+        if let Some((msb, rest)) = outputs.split_last() {
+            let msb = Self::output_bit_to_poly(msb, vars);
+            let init = if is_signed { -msb } else { msb };
+
+            rest.iter().rev().fold(init, |acc, output| {
+                acc * Polynomial::from_constant(Integer::from(2))
+                    + Self::output_bit_to_poly(output, vars)
+            })
+        } else {
+            Polynomial::new()
+        }
     }
 
     fn parse_recursive(
@@ -295,17 +315,11 @@ impl ArithmeticSpec {
                 is_output,
             } => {
                 if *is_output {
-                    let slice: Vec<VarId> = outputs[*offset..offset + width]
-                        .iter()
-                        .map(|o| vars[o.net()])
-                        .collect();
-                    let mut poly = Self::bits_to_poly_signed(&slice, self.is_signed);
-                    for out in &outputs[*offset..offset + width] {
-                        if out.negative() {
-                            poly.neg_var(&vars[out.net()]);
-                        }
-                    }
-                    poly
+                    Self::output_bits_to_poly_signed(
+                        &outputs[*offset..*offset + *width],
+                        vars,
+                        self.is_signed,
+                    )
                 } else {
                     let slice: Vec<VarId> = inputs[*offset..offset + width]
                         .iter()

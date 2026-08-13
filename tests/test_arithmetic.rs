@@ -12,6 +12,17 @@ fn test_truncated_multiplier() {
 }
 
 #[test]
+fn test_portfolio_multiplier() {
+    let cfg = Config::parse_from([
+        "arisca",
+        "examples/multiplier_simple.aig",
+        "--spec", "[64]*[64]",
+        "--portfolio",
+    ]);
+    assert!(arisca::run(cfg).unwrap().is_zero(), "64x64 multiplier portfolio verification failed");
+}
+
+#[test]
 fn test_adder() {
     let cfg = Config::parse_from([
         "arisca",

@@ -27,7 +27,10 @@ use crate::{
 use itertools::Itertools;
 use log::debug;
 use rug::Integer;
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::atomic::{AtomicBool, Ordering},
+};
 
 pub enum Substitution {
     Poly(Polynomial),
@@ -49,6 +52,20 @@ pub struct ReductionContext<'a> {
     pub vars: &'a [VarId],
     pub modulus: Option<&'a Integer>,
     pub substitutions: HashMap<VarId, Substitution>,
+    pub cancelled: Option<&'a AtomicBool>,
+}
+
+impl ReductionContext<'_> {
+    fn check_cancelled(&self) -> Result<()> {
+        if self
+            .cancelled
+            .is_some_and(|flag| flag.load(Ordering::Relaxed))
+        {
+            Err("Verification cancelled.".into())
+        } else {
+            Ok(())
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -438,6 +455,16 @@ pub fn verify(
     stats: &mut ReductionStats,
     size_limit: Option<usize>,
 ) -> Result<Polynomial> {
+    verify_with_cancel(circuit, cfg, stats, size_limit, None)
+}
+
+pub(crate) fn verify_with_cancel(
+    circuit: &Circuit,
+    cfg: &Config,
+    stats: &mut ReductionStats,
+    size_limit: Option<usize>,
+    cancelled: Option<&AtomicBool>,
+) -> Result<Polynomial> {
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
@@ -456,6 +483,7 @@ pub fn verify(
         vars: &vars,
         modulus: modulus.as_ref(),
         substitutions,
+        cancelled,
     };
 
     for (cone, is_conv) in find_ffcc(

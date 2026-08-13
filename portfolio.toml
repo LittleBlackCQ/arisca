@@ -1,0 +1,11 @@
+workers = [
+    "-m heuristic --cone-expansion low",
+    "-m heuristic",
+    "-m heuristic --flip",
+    "-m heuristic --flip --cone-expansion none",
+    "-m heuristic --max-ratio 0.1 --flip --cone-expansion none",
+    "-m bfs",
+    "-m dfs",
+    "-m heuristic --cone-expansion none --delay",
+    "-m heuristic --cone-expansion none --delay --flip",
+]

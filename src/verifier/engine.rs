@@ -145,6 +145,7 @@ impl<'a> ReductionEngine<'a> {
             "[>] Starting engine execution..."
         );
         loop {
+            self.ctx.check_cancelled()?;
             match policy.next_action(&mut self)? {
                 ReductionAction::Stop => {
                     debug!(

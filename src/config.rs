@@ -11,7 +11,7 @@ pub enum ReductionMode {
     Heuristic,
 }
 
-#[derive(Clone, Debug, ValueEnum)]
+#[derive(Clone, Debug, Eq, PartialEq, ValueEnum)]
 pub enum ExtractMode {
     Adder,
     Xor,
@@ -38,8 +38,8 @@ impl ConeExpansion {
     }
 }
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
+#[derive(Clone, Parser, Debug)]
+#[command(version, about, long_about = None, args_override_self = true)]
 pub struct Config {
     #[arg(value_name = "AIG_FILE")]
     pub path: PathBuf,
@@ -82,6 +82,9 @@ pub struct Config {
 
     #[arg(long, default_value_t = false, help = "Enable portfolio mode")]
     pub portfolio: bool,
+
+    #[arg(long, value_name = "TOML_FILE", help = "Portfolio configuration")]
+    pub portfolio_config: Option<PathBuf>,
 
     #[arg(short, long, value_enum, default_value_t = ReductionMode::Heuristic, help = "Reduction mode")]
     pub mode: ReductionMode,

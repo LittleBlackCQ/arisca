@@ -29,7 +29,7 @@ pub fn run(cfg: Config) -> Result<Polynomial> {
     }
 
     let mut stats = ReductionStats::new();
-    let result_poly = if cfg.portfolio {
+    let result_poly = if cfg.portfolio || cfg.portfolio_config.is_some() {
         portfolio_main(circuit, cfg, &mut stats)?
     } else {
         verify(&circuit, &cfg, &mut stats, None)?

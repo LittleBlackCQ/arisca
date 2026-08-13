@@ -1,7 +1,7 @@
 use crate::bipoly::{Polynomial, VarId};
 use crate::circuit::{NetId, NetLit};
 
-use log::{info, warn};
+use log::warn;
 use regex::Regex;
 use rug::Integer;
 
@@ -509,19 +509,20 @@ impl ArithmeticSpec {
         };
 
         let result = minu_poly - sub_poly;
-        let modulus_str = match self.modulus(outputs) {
-            Some(m) => format!("2^{}", m.significant_bits() - 1),
-            None => "none".to_string(),
-        };
-        let poly_str = format!("{:?}", result);
-        let poly_display = if poly_str.len() > 200 {
-            let head: String = poly_str.chars().take(120).collect();
-            let tail: String = poly_str.chars().skip(poly_str.chars().count() - 80).collect();
-            format!("{} ... {}", head, tail)
-        } else {
-            poly_str
-        };
-        info!("Spec polynomial: {}, modulus: {}", poly_display, modulus_str);
+        // use log::info;
+        // let modulus_str = match self.modulus(outputs) {
+        //     Some(m) => format!("2^{}", m.significant_bits() - 1),
+        //     None => "none".to_string(),
+        // };
+        // let poly_str = format!("{:?}", result);
+        // let poly_display = if poly_str.len() > 200 {
+        //     let head: String = poly_str.chars().take(120).collect();
+        //     let tail: String = poly_str.chars().skip(poly_str.chars().count() - 80).collect();
+        //     format!("{} ... {}", head, tail)
+        // } else {
+        //     poly_str
+        // };
+        // info!("Spec polynomial: {}, modulus: {}", poly_display, modulus_str);
         result
     }
 

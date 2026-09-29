@@ -1,6 +1,6 @@
 use super::{
-    ReductionAction, ReductionContext, ReductionMeta, ReductionPolicy, ReductionState,
-    ReductionStats, SizeGuard, Substitution, VarDomain, process_cone,
+    ReductionAction, ReductionContext, ReductionMeta, ReductionPolicy, ReductionState, SizeGuard,
+    Substitution, VarDomain, process_cone,
 };
 use crate::Result;
 use crate::bipoly::{Polynomial, VarId};
@@ -11,7 +11,6 @@ use log::debug;
 pub struct ReductionEngine<'a> {
     pub name: String,
     pub ctx: &'a ReductionContext<'a>,
-    pub stats: Option<&'a mut ReductionStats>,
     pub state: ReductionState,
     pub size_limit: Option<usize>,
 }
@@ -21,14 +20,12 @@ impl<'a> ReductionEngine<'a> {
         name: impl Into<String>,
         ctx: &'a ReductionContext,
         state: ReductionState,
-        stats: Option<&'a mut ReductionStats>,
         size_limit: Option<usize>,
     ) -> Self {
         Self {
             name: name.into(),
             ctx,
             state,
-            stats,
             size_limit,
         }
     }
@@ -176,9 +173,6 @@ impl<'a> ReductionEngine<'a> {
                 self.state.poly.size()
             );
 
-            if let Some(stats) = self.stats.as_mut() {
-                stats.update_size(self.state.poly.size());
-            }
             if let Some(size_limit) = self.size_limit {
                 if self.state.poly.size() > size_limit {
                     self.write_partial_meta()?;

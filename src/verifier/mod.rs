@@ -4,7 +4,6 @@ pub mod guard;
 pub mod meta;
 pub mod policy;
 pub mod spec;
-pub mod stats;
 pub mod topo;
 
 use engine::ReductionEngine;
@@ -13,7 +12,6 @@ use guard::SizeGuard;
 use meta::ReductionMeta;
 use policy::{DefaultPolicy, LazyGreedyPolicy, RandomPolicy, ReductionAction, ReductionPolicy};
 use spec::ArithmeticSpec;
-pub use stats::ReductionStats;
 use topo::{Domain, TopoVar, VarDomain, VecVar};
 
 use crate::{
@@ -389,7 +387,7 @@ pub fn process_cone(
             global_seq: Vec::new(),
             poly_sizes: Vec::new(),
         };
-        let engine = ReductionEngine::new(format!("CONE_{}", cone.root), ctx, state, None, limit);
+        let engine = ReductionEngine::new(format!("CONE_{}", cone.root), ctx, state, limit);
         engine.run(policy)
     };
     let state = if is_conv {
@@ -452,19 +450,17 @@ pub fn process_cone(
 pub fn verify(
     circuit: &Circuit,
     cfg: &Config,
-    stats: &mut ReductionStats,
     size_limit: Option<usize>,
-) -> Result<Polynomial> {
-    verify_with_cancel(circuit, cfg, stats, size_limit, None)
+) -> Result<ReductionState> {
+    verify_with_cancel(circuit, cfg, size_limit, None)
 }
 
 pub(crate) fn verify_with_cancel(
     circuit: &Circuit,
     cfg: &Config,
-    stats: &mut ReductionStats,
     size_limit: Option<usize>,
     cancelled: Option<&AtomicBool>,
-) -> Result<Polynomial> {
+) -> Result<ReductionState> {
     let spec = ArithmeticSpec::new(cfg.spec_str.as_deref(), cfg.signed)?;
 
     let vars = init_vars(circuit);
@@ -561,7 +557,6 @@ pub(crate) fn verify_with_cancel(
         "MAIN",
         &main_ctx,
         main_state,
-        Some(stats),
         size_limit,
     );
     let state = engine.run(&mut *main_policy)?;
@@ -570,5 +565,5 @@ pub(crate) fn verify_with_cancel(
         ReductionMeta::new(&vars, &state.global_seq, &state.poly_sizes).write_json(out_path)?;
     }
 
-    Ok(state.poly)
+    Ok(state)
 }

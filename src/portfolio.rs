@@ -1,9 +1,8 @@
 use crate::config::Config;
 use crate::{
     Result,
-    bipoly::Polynomial,
     circuit::Circuit,
-    verifier::{ReductionStats, verify_with_cancel},
+    verifier::{ReductionState, verify_with_cancel},
 };
 use clap::{Parser, ValueEnum};
 
@@ -102,7 +101,7 @@ impl Portfolio {
         Ok(Self { configs })
     }
 
-    pub fn run(self, circuit: Arc<Circuit>) -> Result<(Polynomial, ReductionStats, String)> {
+    pub fn run(self, circuit: Arc<Circuit>) -> Result<(ReductionState, String)> {
         let total_workers = self.configs.len();
         if total_workers == 0 {
             return Err("No portfolio configurations available.".into());
@@ -118,15 +117,13 @@ impl Portfolio {
             let cancelled_clone = Arc::clone(&cancelled);
 
             handles.push(spawn(move || {
-                let mut local_stats = ReductionStats::new();
                 let result = verify_with_cancel(
                     &circuit_clone,
                     &cfg,
-                    &mut local_stats,
                     Some(cfg.size_limit),
                     Some(&cancelled_clone),
                 );
-                let _ = tx_clone.send((result, local_stats, worker_name));
+                let _ = tx_clone.send((result, worker_name));
             }));
         }
 
@@ -134,14 +131,14 @@ impl Portfolio {
         let mut completed = 0;
 
         let outcome = loop {
-            let Ok((result, local_stats, worker_name)) = rx.recv() else {
+            let Ok((result, worker_name)) = rx.recv() else {
                 break Err("Portfolio aborted unexpectedly.".into());
             };
             completed += 1;
 
             match result {
-                Ok(poly) => {
-                    break Ok((poly, local_stats, worker_name));
+                Ok(state) => {
+                    break Ok((state, worker_name));
                 }
                 Err(e) => {
                     info!("{} failed: {:?}", worker_name, e);
@@ -160,19 +157,14 @@ impl Portfolio {
     }
 }
 
-pub fn portfolio_main(
-    circuit: Circuit,
-    cfg: Config,
-    stats: &mut ReductionStats,
-) -> Result<Polynomial> {
+pub fn portfolio_main(circuit: Circuit, cfg: Config) -> Result<ReductionState> {
     info!("Starting portfolio...");
     let shared_circuit = Arc::new(circuit);
     let portfolio = Portfolio::new(cfg)?;
     match portfolio.run(shared_circuit) {
-        Ok((poly, new_stats, name)) => {
+        Ok((state, name)) => {
             info!("{} finished first.", name);
-            *stats = new_stats;
-            Ok(poly)
+            Ok(state)
         }
         Err(e) => Err(e),
     }

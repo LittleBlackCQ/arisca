@@ -7,6 +7,7 @@ pub mod portfolio;
 pub mod verifier;
 
 use std::error::Error;
+use std::time::Instant;
 pub type Result<T> = std::result::Result<T, Box<dyn Error + Send + Sync + 'static>>;
 
 use aiger::AigerParser;
@@ -14,9 +15,10 @@ use bipoly::Polynomial;
 use circuit::{AdderExtractor, GenericExtractor, MajExtractor, Xor3Extractor, XorExtractor};
 use config::{Config, ExtractMode};
 use portfolio::portfolio_main;
-use verifier::{ReductionStats, verify};
+use verifier::verify;
 
 pub fn run(cfg: Config) -> Result<Polynomial> {
+    let start_time = Instant::now();
     let mut circuit = AigerParser::from_aig(&cfg.path)?;
 
     for mode in &cfg.extract {
@@ -28,12 +30,17 @@ pub fn run(cfg: Config) -> Result<Polynomial> {
         }
     }
 
-    let mut stats = ReductionStats::new();
-    let result_poly = if cfg.portfolio || cfg.portfolio_config.is_some() {
-        portfolio_main(circuit, cfg, &mut stats)?
+    let state = if cfg.portfolio || cfg.portfolio_config.is_some() {
+        portfolio_main(circuit, cfg)?
     } else {
-        verify(&circuit, &cfg, &mut stats, None)?
+        verify(&circuit, &cfg, None)?
     };
-    log::info!("{:?}", stats);
-    Ok(result_poly)
+    log::info!(
+        "Execution Summary:\n    - {:.<25} {}\n    - {:.<25} {:?}",
+        "Max Poly Size",
+        state.poly_sizes.iter().copied().max().unwrap_or_default(),
+        "Total Time",
+        start_time.elapsed(),
+    );
+    Ok(state.poly)
 }

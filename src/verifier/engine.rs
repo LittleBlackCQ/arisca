@@ -6,7 +6,6 @@ use crate::Result;
 use crate::bipoly::{Polynomial, VarId};
 use crate::json::ToJson;
 
-use log::debug;
 
 pub struct ReductionEngine<'a> {
     pub name: String,
@@ -64,13 +63,7 @@ impl<'a> ReductionEngine<'a> {
         gate_poly: Polynomial,
         guard: Option<&SizeGuard>,
     ) -> Result<()> {
-        debug!(
-            "{:<12} {:<20} {:>14} | Poly size: {}",
-            format!("[{}]", self.name),
-            "[~] Reducing var:",
-            var,
-            gate_poly.size()
-        );
+        debug_step!(self.name; step; "Reducing var", var; "Poly size: {}", gate_poly.size());
         let new_vars = gate_poly.vars();
         let gate_poly = if let Some(fm) = &self.state.flip_manager {
             fm.normalize(&var, &new_vars, &gate_poly)
@@ -136,20 +129,12 @@ impl<'a> ReductionEngine<'a> {
 
     pub fn run(mut self, policy: &mut dyn ReductionPolicy) -> Result<ReductionState> {
         let mut curr = 0;
-        debug!(
-            "{:<12} {:<35} |",
-            format!("[{}]", self.name),
-            "[>] Starting engine execution..."
-        );
+        debug_step!(self.name; event; "Starting engine execution...");
         loop {
             self.ctx.check_cancelled()?;
             match policy.next_action(&mut self)? {
                 ReductionAction::Stop => {
-                    debug!(
-                        "{:<12} {:<35} |",
-                        format!("[{}]", self.name),
-                        "[>] Engine execution stopped."
-                    );
+                    debug_step!(self.name; event; "Engine execution stopped.");
                     break;
                 }
                 ReductionAction::Reduce(var) => {
@@ -165,12 +150,9 @@ impl<'a> ReductionEngine<'a> {
             }
 
             curr += 1;
-            debug!(
-                "{:<12} {:<20} {:>14} | Current size: {}",
-                format!("[{}]", self.name),
-                "[*] Progress:",
-                format!("{}/{}", curr, self.state.var_domain.len()),
-                self.state.poly.size()
+            debug_step!(
+                self.name; progress; "Progress", format!("{}/{}", curr, self.state.var_domain.len());
+                "Current size: {}", self.state.poly.size()
             );
 
             if let Some(size_limit) = self.size_limit {

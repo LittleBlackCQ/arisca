@@ -1,3 +1,35 @@
+macro_rules! debug_step {
+    (@mark step) => { "~" };
+    (@mark probe) => { "?" };
+    (@mark progress) => { "*" };
+    (@mark event) => { ">" };
+    (@mark fallback) => { "!" };
+    ($scope:expr; $kind:ident; $label:expr, $value:expr; $($detail:tt)+) => {
+        log::debug!(
+            "{:<12} {:<20} {:>14} | {}",
+            format!("[{}]", $scope),
+            format!("[{}] {}:", debug_step!(@mark $kind), $label),
+            $value,
+            format_args!($($detail)+),
+        )
+    };
+    ($scope:expr; $kind:ident; $message:expr; $($detail:tt)+) => {
+        log::debug!(
+            "{:<12} {:<35} | {}",
+            format!("[{}]", $scope),
+            format!("[{}] {}", debug_step!(@mark $kind), $message),
+            format_args!($($detail)+),
+        )
+    };
+    ($scope:expr; $kind:ident; $message:expr $(,)?) => {
+        log::debug!(
+            "{:<12} {:<35} |",
+            format!("[{}]", $scope),
+            format!("[{}] {}", debug_step!(@mark $kind), $message),
+        )
+    };
+}
+
 pub mod aiger;
 pub mod bipoly;
 pub mod circuit;

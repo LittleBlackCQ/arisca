@@ -1,7 +1,6 @@
 use crate::bipoly::{Polynomial, VarId};
 use std::collections::HashSet;
 
-use log::debug;
 
 #[derive(Clone)]
 pub struct FlipManager {
@@ -28,13 +27,9 @@ impl FlipManager {
                 let origin_size = origin_poly.size();
                 let new_size = poly.size();
                 if new_size < origin_size {
-                    debug!(
-                        "{:<12} {:<20} {:>14} | Size: {:>4} -> {:<4}",
-                        "[FLIP]",
-                        format!("[~] Flipped var:"),
-                        v,
-                        origin_size,
-                        new_size
+                    debug_step!(
+                        "FLIP"; step; "Flipped var", v;
+                        "Size: {:>4} -> {:<4}", origin_size, new_size
                     );
                     self.flipped_vars.insert(*v);
                 } else {

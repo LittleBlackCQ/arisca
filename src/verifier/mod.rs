@@ -23,7 +23,6 @@ use crate::{
 };
 
 use itertools::Itertools;
-use log::debug;
 use rug::Integer;
 use std::{
     collections::{HashMap, HashSet},
@@ -413,11 +412,9 @@ pub fn process_cone(
             &mut DefaultPolicy {},
         )
         .or_else(|err| {
-            debug!(
-                "{:<12} {:<35} | Error: {}",
-                format!("[CONE_{}]", cone.root),
-                "[!] BFS failed, fallback to DFS",
-                err
+            debug_step!(
+                format!("CONE_{}", cone.root); fallback; "BFS failed, fallback to DFS";
+                "Error: {}", err
             );
             run_sub(
                 poly.clone(),
@@ -427,11 +424,9 @@ pub fn process_cone(
             )
         })
         .or_else(|err| {
-            debug!(
-                "{:<12} {:<35} | Error: {}",
-                format!("[CONE_{}]", cone.root),
-                "[!] DFS failed, fallback to GREEDY",
-                err
+            debug_step!(
+                format!("CONE_{}", cone.root); fallback; "DFS failed, fallback to GREEDY";
+                "Error: {}", err
             );
             run_sub(
                 poly,

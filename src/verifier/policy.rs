@@ -4,7 +4,6 @@ use crate::{
     bipoly::{Polynomial, VarId},
 };
 
-use log::debug;
 use rand::{seq::SliceRandom, thread_rng};
 use std::collections::HashMap;
 
@@ -74,26 +73,18 @@ impl ReductionPolicy for LazyGreedyPolicy {
         let guard = SizeGuard::new(current_size.saturating_mul(PROBE_ABORT_RATIO));
         for &var in &candidates {
             if let Err(err) = engine.reduce_var(var, Some(&guard)) {
-                debug!("Var: {:?} failed. Error: {:?}", var, err);
+                debug_step!(engine.name; fallback; "Probing failed", var; "Error: {:?}", err);
                 engine.state = origin_state.clone();
                 continue;
             }
             let ratio =
                 (engine.state.poly.size() as f64 - current_size as f64) / current_size as f64;
-            debug!(
-                "{:<12} {:<20} {:>14} | Ratio: {:.3}",
-                format!("[{}]", engine.name),
-                "[?] Probing size:",
-                format!("{}", engine.state.poly.size()),
-                ratio
+            debug_step!(
+                engine.name; probe; "Probing size", engine.state.poly.size();
+                "Ratio: {:.3}", ratio
             );
             if ratio < self.max_ratio {
-                debug!(
-                    "{:<12} {:<20} {:>14} | Action: Skip",
-                    format!("[{}]", engine.name),
-                    format!("[*] Chosen var:"),
-                    var,
-                );
+                debug_step!(engine.name; progress; "Chosen var", var; "Action: Skip");
                 return Ok(ReductionAction::Skip);
             } else {
                 let value = self.penalty.entry(var).or_insert(1);
@@ -110,12 +101,7 @@ impl ReductionPolicy for LazyGreedyPolicy {
             }
         }
         if let Some((_, var, state)) = best_candidate {
-            debug!(
-                "{:<12} {:<20} {:>14} | Action: Replace",
-                format!("[{}]", engine.name),
-                format!("[*] Chosen var:"),
-                var,
-            );
+            debug_step!(engine.name; progress; "Chosen var", var; "Action: Replace");
             return Ok(ReductionAction::Replace(state));
         } else {
             return Ok(ReductionAction::Reduce(candidates[0]));
